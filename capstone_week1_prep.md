@@ -1,55 +1,67 @@
-# Capstone — Week 1 Prep
+# Capstone Project — Week 1 Preparation
 
-**AI & the Software Job Market** · Ginger-Graphs cohort
+**Project:** AI & the German Job Market
+**Author:** Riadh · Ginger-Graphs cohort
+**Date:** August 2026
 
 ---
 
 ## 1. Project Overview
 
-**Domain:** Labour market / employment (software & IT focus, extensible to all jobs).
+**Domain:** Labour market / employment — focus on German job postings, all occupations, with software/IT as the analytical centre of gravity.
 
-**In one sentence:** A data pipeline that measures how AI is reshaping the job market — combining live job postings (what employers demand today) with public GitHub activity (AI's footprint in real code) and official employment statistics (how jobs changed before vs. during the AI era), all keyed to how AI-exposed each occupation is.
+**In one sentence:** A data pipeline that measures how AI is reshaping the German job market, by combining real job-posting text (what employers demand) with official employment statistics (how jobs changed over time) and public GitHub activity (AI's footprint in code) — all tied to each occupation's AI-exposure score.
 
-**Who uses it:** Workforce / labour-market researchers and analysts.
+**Who would use it:** Labour-market and workforce researchers, and analysts studying AI's effect on employment.
 
-**Problem it solves:** The data on AI's effect on jobs is scattered — postings in one place, code activity in another, employment history in a third — and nobody joins them. Analysts need these signals in one place, refreshed automatically, tied to a common occupation standard, so they can see how AI-exposed occupations are behaving.
+**Problem it solves (business need):** The evidence on AI's impact on jobs is scattered — posting text sits in one place, employment history in another, code activity in a third — and nobody joins them on a common occupation standard. Analysts need these signals in one pipeline, refreshed and comparable, keyed to how AI-exposed each occupation is.
+
+**The core question:** In AI-exposed occupations, is AI *substituting* workers (employment/demand falling) or *augmenting* them (demand for AI skills rising)?
 
 ---
 
 ## 2. Data
 
-| Source | Role | Type | Update | Verified | Key limitation |
-|---|---|---|---|---|---|
-| **Adzuna API** | live postings, AI-skill demand | REST/JSON (free) | daily (forward only) | ✅ | descriptions truncated to 500 chars; ~33 calls/day |
-| **GH Archive** | AI-authorship signals in code | hourly JSON event log | historical, 2011→ | ✅ | AI signals are a floor (invisible autocomplete untracked) |
-| **ILO WP140 exposure** | AI-exposure score per occupation | static CSV | yearly | ✅ built | US-neutral, ISCO-08 keyed; static |
-| **Eurostat lfsa_egai2d** | historical employment by occupation | REST/JSON-stat | annual, 2011–2025 | ✅ | ISCO **2-digit**, annual (coarse) |
-| Destatis / BA | German labour backdrop | REST/JSON | — | verified | KldB codes need crosswalk |
-| OECD.AI / Stanford AI Index | historical AI-skill demand trend | web / CSV | annual | **to verify** | aggregate, not per-posting |
+Verified sources (each pulled and inspected on real data), with the honest role of each:
 
-**Join key across all:** ISCO-08 occupation code (`isco08_4digit`; rolled to 2-digit for Eurostat).
+| Source | Role | Type | Coverage | Verified |
+|---|---|---|---|---|
+| **Kaggle German postings** (`sample_jobs_5000`) | granular AI-skill demand (full descriptions, salary) | CSV, per-posting | Germany, 2022–2026 (dense 2025–26) | ✅ |
+| **Eurostat** `lfsa_egai2d` | historical employment by occupation | REST / JSON-stat | EU incl. DE, 2011–2025, ISCO 2-digit | ✅ |
+| **GH Archive** | AI-authorship signals in code | hourly JSON events | global, 2011→ | ✅ |
+| **ILO WP140** exposure | AI-exposure score per occupation | static CSV | ISCO-08 4-digit, 300 occupations | ✅ built |
+| **ESCO** (occupations_de) | German job title → ISCO occupation code | static CSV | 3,043 occupations, German labels | ✅ |
+| `job_postings_raw` (Kaggle) | development / validation only | CSV | Germany, 2024–2025 | ✅ |
 
-**Access verified?** Yes for the four core sources — each pulled and inspected on real data.
+**Join key across everything:** the **ISCO-08 occupation code** — produced by matching each German title to an ESCO occupation, then joined to the ILO exposure score and (rolled to 2-digit) to Eurostat.
+
+**Sources evaluated and rejected (due diligence):**
+- **Adzuna API** — descriptions truncated to 500 chars; unusable for skill detection.
+- **Bundesagentur für Arbeit API** — unofficial, auth changed, could not authenticate reliably.
+- **Techmap / Lightcast / TheirStack** — rich granular history exists but is **paid** (~€4,800/yr class).
+- **OECD.AI / Stanford AI Index** — aggregated percentages only; benchmark, not raw material.
+
+**Honest conclusion on data:** free, granular, multi-year, full-text German posting data does **not** exist — it is a commercial product. The design therefore combines a rich *recent* granular source (Kaggle) with an aggregate *historical* source (Eurostat), each covering the other's blind spot.
 
 ---
 
 ## 3. Pipeline Design
 
-Two source branches, medallion layers, meeting on a shared occupation code + timeline.
+Medallion architecture, one occupation code linking every layer.
 
 ```
-Adzuna API ─┐                        bronze (raw, immutable, dated)
-GH Archive ─┼── ingest ────────────► silver (crosswalk → ISCO, AI-skill tag, clean)
-Eurostat  ──┘                        gold   (star schema: fact + dims + marts)
-ILO CSV ───────────────────────────► joined on ISCO in silver/gold
-                                        │
-                                        └─► serving: AI-skill demand by exposure band;
-                                            employment trend before/during AI; code-AI trend
+Kaggle CSV  ─┐                    bronze  (raw, immutable, dated folders)
+Eurostat    ─┼── ingest ───────►  silver  (ESCO crosswalk → ISCO, AI-skill tag, clean)
+GH Archive  ─┘                    gold    (star schema: fact + dims + marts)
+ESCO + ILO  ──────────────────►   joined on ISCO code in silver / gold
+                                    │
+                                    └──► serving: AI-skill demand by exposure band,
+                                         employment trend by exposure band, code-AI trend
 ```
 
-- **Bronze:** exact raw pulls, `data/{layer}/adzuna|eurostat/dt=YYYY-MM-DD/...`, never mutated.
-- **Silver:** one clean row per posting/event — crosswalked to ISCO, AI-skill tagged, exposure joined.
-- **Gold:** `fact_job_postings` + `fact_employment` + `dim_occupation` (exposure) + `dim_date`, and serving marts.
+- **Bronze:** exact raw pulls, partitioned `data/bronze/<source>/dt=YYYY-MM-DD/`. Never mutated.
+- **Silver:** one clean row per posting — **German title → ESCO occupation → ISCO code**, AI-skill flag from the full description, ILO exposure joined.
+- **Gold:** `fact_job_postings` + `fact_employment` + `dim_occupation` (holds exposure) + `dim_date`, plus serving marts.
 
 ---
 
@@ -57,29 +69,28 @@ ILO CSV ────────────────────────
 
 | Tech | Why |
 |---|---|
-| Python + requests | ingestion; the language of the pipeline |
-| pandas | transforms at POC stage (CSV in/out) |
-| custom crosswalk | title → ISCO-08 (keyword rules + category fallback) |
-| **PostgreSQL** | the warehouse — chosen because it's what I learned and can defend |
-| dbt | transforms + tests + lineage *(planned, post-approval)* |
-| PySpark | the GH Archive branch only (genuine big data) *(planned)* |
+| Python + pandas | ingestion and transforms at this stage |
+| **rapidfuzz** | fuzzy-match German titles to ESCO occupation labels |
+| ESCO occupation taxonomy | authoritative title → ISCO mapping (no hand-guessing) |
+| **PostgreSQL** | the warehouse — chosen because it is the DB I learned and can defend |
+| dbt | transforms + tests + lineage *(planned, after approval)* |
 | Airflow | orchestration *(planned)* |
 | Docker Compose | containerisation *(planned)* |
 | Metabase / Streamlit | serving / dashboard *(planned)* |
 
-**Deliberately NOT used:** Kafka/streaming (postings are batch), paid cloud warehouses (Postgres suffices). Documented as ADRs.
+**Deliberately NOT used:** Kafka/streaming (postings are batch, not a stream); paid cloud warehouses (Postgres suffices). Recorded as ADRs.
 
 ---
 
 ## 5. Scope
 
-**MVP (must work):** Adzuna → ISCO crosswalk → AI-skill tag → join ILO exposure → silver (dated) → gold mart showing **AI-skill demand by exposure band**. This is proven end-to-end on real data today.
+**MVP (must work):** Kaggle German postings → ESCO crosswalk to ISCO → AI-skill tag on full descriptions → join ILO exposure → dated silver → gold mart showing **AI-skill demand by AI-exposure band**. *This runs end-to-end today on real data.*
 
-**Stretch goals (in order):**
-1. Eurostat historical employment by exposure band (before/during-AI trend).
+**Stretch goals (ordered):**
+1. Eurostat historical employment by exposure band (the before/during-AI trend).
 2. GH Archive AI-authorship trend (the code side).
-3. dbt + Postgres + Airflow + Docker (productionise).
-4. Dashboard; ESCO semantic crosswalk; OECD/Stanford AI-demand trend.
+3. Productionise: dbt + Postgres + Airflow + Docker.
+4. Dashboard; embeddings upgrade for the ESCO crosswalk.
 
 ---
 
@@ -87,15 +98,59 @@ ILO CSV ────────────────────────
 
 | Risk | Mitigation |
 |---|---|
-| **No historical job-posting text exists** → can't trend AI-skill demand from descriptions | Route the historical question to Eurostat *employment* trends; use OECD/Stanford for aggregate AI-demand history; treat Adzuna AI-skill as a *current floor*, not a trend |
-| Adzuna: truncated descriptions + 33 calls/day | Accept AI-skill rate as a floor (documented); pull small daily, accumulate; develop offline against stored bronze |
-| Crosswalk mis-maps titles → wrong exposure | `match_method` flag (keyword vs fallback); grow rules from real data; unit tests |
-| Scope creep (too many sources) | MVP = 3 core sources only; everything else sequenced after approval |
+| **Sample thin per (band × year) cell** → noisy year-by-year trend | Aggregate into larger buckets (High vs Low exposure; 2022–24 vs 2025–26); report comparisons, not fragile per-year %s |
+| **No historical granular posting text** (proprietary) | Route history to Eurostat *employment*; Kaggle covers *recent* granular detail; state the split openly |
+| **Crosswalk coverage ~61%** (title → ISCO) | ESCO exact+fuzzy matching (real occupations, not guesses); grow via an unmapped-review file each run; tune fuzzy threshold |
+| **Correlation, not causation** | Compare exposure bands relative to each other (control group); never claim AI *caused* a change |
 
 ---
 
 ## 7. Plan for Next Week
 
-1. Stabilise the Adzuna→silver→gold path with dated partitions accumulating (done — verify running daily).
-2. Build `eurostat_tidy.py` — flatten JSON-stat → tidy employment rows joined to exposure.
-3. Grow the crosswalk from real `category_fallback`/`unmapped` rows; add unit tests.
+1. Push crosswalk coverage above ~75% (tune the ESCO fuzzy threshold; review unmapped titles) and confirm mapped codes are occupation-accurate.
+2. Build the Eurostat ingestion (`eurostat.py`): JSON-stat → tidy employment rows joined to exposure — the historical dimension.
+3. Build the gold layer (fact + dims) and the first serving mart: AI-skill demand by exposure band, aggregated into stable buckets.
+
+---
+
+## 5-Minute Pitch
+
+- **Problem:** everyone asks how AI is reshaping work, but the data is scattered and unjoined.
+- **Solution:** one pipeline joining German posting text (demand), official employment history (Eurostat), and GitHub code activity — all on the ISCO occupation code plus an AI-exposure score.
+- **Data:** verified — Kaggle German postings (now), Eurostat (history), GH Archive (code), ESCO + ILO (the mapping and the lens).
+- **Honest framing:** findings are trends and correlations, not proof of causation; granular history is proprietary, so recent granular detail (Kaggle) pairs with aggregate history (Eurostat).
+- **MVP:** the German-postings → ESCO → exposure → AI-skill mart — working today.
+- **Next week:** raise crosswalk coverage, add the Eurostat historical layer, build the gold mart.
+
+---
+
+## Current Status (what already works)
+
+- ✅ All core sources verified on **real data**, not assumptions.
+- ✅ ISCO exposure reference (ILO WP140) extracted to CSV.
+- ✅ ESCO crosswalk: German title → ISCO occupation (61% mapped: exact + fuzzy).
+- ✅ AI-skill tagger (German + English) running on full descriptions.
+- ✅ End-to-end run: Kaggle CSV → silver → preview mart (AI-skill % by exposure band × year).
+- ✅ GH Archive AI-authorship parser, independently audited.
+
+**Early observation:** AI-skill demand is ~1% across all German occupations but ~10% among IT roles — demand concentrates in tech, negligible elsewhere.
+
+---
+
+## How to Demo / Test
+
+```bash
+# occupation mapping works (German title → ISCO via ESCO)
+python3 -m src.transform.esco_crosswalk
+
+# full pipeline: Kaggle German postings → silver
+python3 -m src.ingestion.kaggle_jobs
+#   → prints coverage (esco_exact / esco_fuzzy / unmapped),
+#     AI-skill %, and AI-skill by exposure band × year
+
+# historical source verified live
+python3 src/ingestion/eurostat_sample.py     # German ICT employment 2011–2025
+
+# code-side signals verified
+python3 src/transform/gharchive_signals.py data/bronze/gharchive/<file>.json
+```
