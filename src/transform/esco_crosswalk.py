@@ -57,8 +57,8 @@ import pandas as pd
 # ----------------------------- configuration --------------------------------
 MODEL_NAME  = "intfloat/multilingual-e5-base"   # -> "-large" for more accuracy
 MODEL_STYLE = "e5"        # "e5" (uses query:/passage: prefixes) or "plain"
-ACCEPT      = 0.88       # cosine >= ACCEPT  -> accept the semantic match
-REVIEW_LOW  = 0.85     # ACCEPT > cosine >= REVIEW_LOW -> mapped but flagged review
+ACCEPT      = 0.88        # cosine >= ACCEPT  -> accept the semantic match
+REVIEW_LOW  = 0.85        # ACCEPT > cosine >= REVIEW_LOW -> mapped but flagged review
                           # cosine < REVIEW_LOW -> unmapped
 BATCH       = 256
 
@@ -71,8 +71,29 @@ PREFIX_STRIP = [
     "aushilfe", "minijob", "minijobber", "nebenjob", "ferienjob",
     "studentische aushilfe", "quereinsteiger", "senior", "junior",
     "stellvertretender", "stellvertretende", "stellvertretung", "leitende",
-    "leitender",
+    "leitender", "contract", "freelance", "freelancer", "interim",
 ]
+
+# ---------------------------------------------------------------------------
+# Curated title -> ISCO alias table (tier 0, checked before exact/semantic).
+# A hand-verified crosswalk IS the right tool for high-frequency titles that
+# have no clean single ESCO/ISCO home — chiefly modern data/AI roles that
+# ISCO-08 (2008) predates. Keys are the NORMALIZED title (wrappers already
+# stripped, so "werkstudent machine learning" -> "machine learning"), so one
+# entry catches every employment-form variant. Grow this from silver-check [5].
+#
+# Mapping assumption (documented, adjustable): analytical roles -> 2511
+# Systems Analysts (Gradient 2); build/engineer roles -> 2512 Software
+# Developers (Gradient 3). Change these if your writeup argues a different home.
+ALIAS = {
+    "data scientist": "2511", "data science": "2511", "data analyst": "2511",
+    "bi": "2511", "business intelligence": "2511", "bi consultant": "2511",
+    "bi analyst": "2511",
+    "ml engineer": "2512", "machine learning": "2512",
+    "machine learning engineer": "2512", "ai engineer": "2512",
+    "deep learning": "2512", "data engineer": "2512", "bi developer": "2512",
+    "mlops": "2512", "mlops engineer": "2512",
+}   # keys already in normalized form (lowercase, no wrappers, no punctuation)
 GENDER = re.compile(r"\(?\s*m\s*[/|]\s*w\s*[/|]\s*(d|x)\s*\)?", re.I)   # (m/w/d)
 SUFX   = re.compile(r"(:in|/-?in|\*in|/in|\-in)\b", re.I)              # gender suffixes
 NONWORD= re.compile(r"[^\wäöüß\s-]", re.I)
@@ -111,7 +132,7 @@ def load_esco(path: str) -> pd.DataFrame:
 
     rows = []
     for _, r in raw.iterrows():
-        code = re.sub(r"\D", "", str(r[isco]))[:4]
+        code = re.sub(r"\D", "", str(r[isco])).zfill(4)[:4]
         if len(code) != 4:
             continue
         occ = r[pref].strip()
@@ -129,22 +150,31 @@ def load_esco(path: str) -> pd.DataFrame:
 def load_exposure(path: str):
     ex = pd.read_csv(path, dtype={"isco08_4digit": str})
     by_code = ex.set_index("isco08_4digit")[
-        ["exposure_category", "exposure_order", "mean_task_score", "sd_task_score"]
+        ["occupation_name", "exposure_category", "exposure_order",
+         "mean_task_score", "sd_task_score"]
     ].to_dict("index")
     ex["p3"] = ex["isco08_4digit"].str[:3]
-    parent = ex.groupby("p3")["mean_task_score"].mean().round(2).to_dict()
-    return by_code, parent
+    ex["p2"] = ex["isco08_4digit"].str[:2]
+    parent3 = ex.groupby("p3")["mean_task_score"].mean().round(2).to_dict()
+    parent2 = ex.groupby("p2")["mean_task_score"].mean().round(2).to_dict()
+    return by_code, (parent3, parent2)
 
-def attach_exposure(isco4, by_code, parent):
+def attach_exposure(isco4, by_code, parents):
+    isco4 = str(isco4).split(".")[0].zfill(4)   # "110.0" -> "0110"; guards leading zeros
+    parent3, parent2 = parents
     if isco4 in by_code:
         r = by_code[isco4]
         return dict(exposure_category=r["exposure_category"],
                     exposure_order=int(r["exposure_order"]),
                     mean_task_score=r["mean_task_score"],
                     sd_task_score=r["sd_task_score"], exposure_imputed=False)
-    m = parent.get(isco4[:3])
-    if m is not None:                       # impute from 3-digit ISCO parent
+    m = parent3.get(isco4[:3])              # impute from 3-digit ISCO parent
+    if m is not None:
         return dict(exposure_category="Imputed (3-digit parent)", exposure_order=None,
+                    mean_task_score=m, sd_task_score=None, exposure_imputed=True)
+    m = parent2.get(isco4[:2])              # fall back to 2-digit parent
+    if m is not None:
+        return dict(exposure_category="Imputed (2-digit parent)", exposure_order=None,
                     mean_task_score=m, sd_task_score=None, exposure_imputed=True)
     return dict(exposure_category=None, exposure_order=None, mean_task_score=None,
                 sd_task_score=None, exposure_imputed=False)
@@ -188,6 +218,14 @@ class EscoCrosswalk:
         rec.update(attach_exposure(e["isco4"], self.by_code, self.parent))
         return rec
 
+    def _alias_row(self, isco4, norm):
+        occ = self.by_code.get(isco4, {}).get("occupation_name")
+        rec = dict(isco08_4digit=isco4, occupation_name=occ,
+                   match_method="alias", matched_label=norm,
+                   match_score=1.0, norm_title=norm)
+        rec.update(attach_exposure(isco4, self.by_code, self.parent))
+        return rec
+
     def _unmapped(self, norm, score):
         return dict(isco08_4digit=None, occupation_name=None,
                     match_method="unmapped", matched_label=None,
@@ -199,9 +237,12 @@ class EscoCrosswalk:
         norms = [normalize(t) for t in titles]
         recs = [None] * len(norms)
 
-        # tier 1: exact normalized-label match
+        # tier 0: curated alias  ->  tier 1: exact ESCO label  ->  (tier 2: semantic)
         todo = []
         for k, n in enumerate(norms):
+            if n in ALIAS:
+                recs[k] = self._alias_row(ALIAS[n], n)
+                continue
             i = self.exact.get(n)
             if i is not None:
                 recs[k] = self._row(i, "esco_exact", 1.0, n)
