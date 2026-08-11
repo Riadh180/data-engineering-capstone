@@ -154,3 +154,95 @@ the *trend over time* and the *composition* (e.g. agents do mostly fixes/refacto
 - ✅ ILO exposure reference built (ISCO-08)
 - ✅ Crosswalk + GH Archive signal parser working and independently audited
 - ▶ Next: crosswalk on non-software categories, then requirements sign-off, then build
+
+
+## Check Silver:
+```bash
+python3 -m src.ingestion.kaggle_jobs
+python3 -m src.ingestion.tech_jobs
+
+head -1 data/silver/kaggle/dt=*/de_jobs.csv | tr ',' '\n'
+# check coverage:
+python3 -c "import pandas as pd; d=pd.read_csv('data/silver/kaggle/dt=2026-08-10/de_jobs.csv'); print(round(100*(d['match_method']!='unmapped').mean()),'% mapped'); print(d['match_method'].value_counts().to_dict())"
+```
+
+---
+
+## Tagger sanity check:
+
+check_it.py — pulls IT/data occupations (ISCO 251/252) and shows how many have has_ai_skill=False. Purpose: confirm the tagger isn't missing AI on tech roles.
+
+check_ai.py — lists the postings flagged has_ai_skill=True + which terms fired. Purpose: confirm the hits are real AI roles, not false positives.
+
+agg.py — the AI-skill % by exposure band × period. Purpose: the actual finding (the High>Mid>Low gradient), in stable buckets.
+
+check_map.py - It spot-checks whether the crosswalk assigned the right occupation. It pulls 20 random rows that matched via esco_fuzzy (the riskiest tier — fuzzy guesses, not exact) and shows each German title next to the English ISCO occupation it got mapped to.
+
+```bash
+python3 check_it.py
+
+python3 check_ai.py
+
+python3 agg.py
+
+python3 check_map.py
+```
+
+It does all five checks — coverage, AI-skill rate, fuzzy spot-check, exposure-band breakdown, and top unmapped titles — for any silver file:
+```bash
+python3 check_silver.py data/silver/kaggle/dt=2026-08-10/de_jobs.csv normalized_title
+python3 check_silver.py data/silver/tech/dt=2026-08-10/de_tech_jobs.csv title_clean
+```
+
+
+## Script to show all skills from the job_postings_raw.csv:
+
+```bash
+cat > find_ai_terms.py << 'EOF'
+import pandas as pd, re
+from collections import Counter
+d = pd.read_csv('data/bronze/kaggle/job_postings_raw.csv')
+text = " ".join(d['skills_extracted'].fillna('').astype(str)).lower()
+# count all distinct skills (they're ; separated)
+skills = Counter(s.strip() for s in text.replace('\n',';').split(';') if s.strip())
+print("TOP 60 skills in the data:")
+for s, n in skills.most_common(60):
+    print(f"{n:>5}  {s}")
+EOF
+python3 find_ai_terms.py
+```
+
+
+## Verifying the silver layer
+
+`check_silver.py` runs a 7-point quality report on any silver file. Run it after
+every ingestion to confirm the data is trustworthy before building gold.
+
+### Usage
+```bash
+python3 check_silver.py <silver.csv> [title_column]
+
+# general dataset
+python3 check_silver.py data/silver/kaggle/dt=YYYY-MM-DD/de_jobs.csv normalized_title
+
+# tech dataset
+python3 check_silver.py data/silver/tech/dt=YYYY-MM-DD/de_tech_jobs.csv title_clean
+```
+
+### What it checks
+| # | Check | What it tells you |
+|---|-------|-------------------|
+| 1 | Coverage | % of titles mapped to ISCO, and via which tier (alias/exact = reliable, fuzzy = risky, unmapped = none) |
+| 2 | AI-skill demand | the AI-skill rate and which terms fired (spot false positives) |
+| 3 | Fuzzy spot-check | sample of fuzzy-matched rows to eyeball for wrong occupations |
+| 4 | Exposure bands | AI-skill % by High/Mid/Low exposure — the core finding |
+| 5 | Top unmapped | highest-frequency titles missing a code (what rules to add next) |
+| 6 | Broken joins | rows mapped to an ISCO code absent from the ILO exposure file |
+| 7 | Null audit | missing values in analysis-critical columns |
+
+### What "good" looks like
+- **Coverage** ≥ ~80%, mostly `alias`/`esco_exact` (not fuzzy).
+- **AI-skill terms** are genuine AI/ML (no incidental mentions).
+- **Fuzzy spot-check** rows map to sensible occupations (or the tier is empty).
+- **Broken joins** and **critical nulls** are 0.
+- **Unmapped** remainder is mostly non-occupations (Werkstudent, Minijob, FSJ).

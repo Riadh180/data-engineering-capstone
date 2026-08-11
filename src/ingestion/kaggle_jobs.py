@@ -13,7 +13,7 @@ from datetime import date, datetime, timezone
 
 import pandas as pd
 
-from src.transform.esco_crosswalk import map_title_to_isco, match_method
+from src.transform.esco_crosswalk import EscoCrosswalk
 from src.transform.ai_skill_tagger import detect_ai_skill
 
 BRONZE = "data/bronze/kaggle/sample_jobs_5000.csv"
@@ -36,16 +36,13 @@ def ingest():
     return df
 
 
-def transform(df):
-    # crosswalk: normalized_title (clean) -> ISCO-08 code. it-jobs tag helps some rules.
-    codes, notes = [], []
-    for t in df["normalized_title"].fillna(""):
-        c, n = map_title_to_isco(t, "")          # no Adzuna category here
-        codes.append(c); notes.append(n)
-    df["isco08_4digit"] = codes
-    df["match_method"] = [match_method(n) for n in notes]
+def transform(df, xw):
+    # crosswalk: normalized_title -> ISCO-08 by MEANING (ESCO semantic), batched
+    mapped = xw.map_titles(df["normalized_title"].fillna("").tolist())
+    df = df.drop(columns=[c for c in mapped.columns if c in df.columns], errors="ignore")
+    df = pd.concat([df.reset_index(drop=True), mapped.reset_index(drop=True)], axis=1)
 
-    # AI-skill tag on the FULL description (this is the whole point of this dataset)
+    # AI-skill tag on the FULL description (unchanged — this is the point of this dataset)
     flags, terms = [], []
     for title, desc in zip(df["title"].fillna(""), df["description_text"].fillna("")):
         f, ts = detect_ai_skill(title, desc)
@@ -53,29 +50,20 @@ def transform(df):
     df["has_ai_skill"] = flags
     df["ai_skill_terms"] = terms
 
-    print(f"[2] TRANSFORM: crosswalk + AI-skill tag")
+    print("[2] TRANSFORM: crosswalk (ESCO semantic) + AI-skill tag")
     print(f"    match_method: {df['match_method'].value_counts().to_dict()}")
     print(f"    AI-skill: {int(df['has_ai_skill'].sum())}/{len(df)} "
           f"({100*df['has_ai_skill'].mean():.1f}%)")
     return df
 
 
-def enrich(df):
-    ilo = pd.read_csv(ILO_FILE, dtype={"isco08_4digit": str})
-    df["isco08_4digit"] = df["isco08_4digit"].astype(str)
-    out = df.merge(
-        ilo[["isco08_4digit", "occupation_name", "exposure_category",
-             "exposure_order", "mean_task_score"]],
-        on="isco08_4digit", how="left")
-    print(f"[3] ENRICH: joined ILO exposure ({len(ilo)} occupations)")
-    return out
-
-
 def store_silver(df):
     keep = ["job_id", "title", "normalized_title", "company", "city",
-            "country_code", "date_published", "year", "has_salary_info",
-            "isco08_4digit", "match_method", "has_ai_skill", "ai_skill_terms",
-            "occupation_name", "exposure_category", "exposure_order", "mean_task_score"]
+        "country_code", "date_published", "year", "has_salary_info",
+        "isco08_4digit", "match_method", "matched_label", "match_score",
+        "needs_review", "has_ai_skill", "ai_skill_terms",
+        "occupation_name", "exposure_category", "exposure_order",
+        "mean_task_score", "sd_task_score", "exposure_imputed"]
     df = df[[c for c in keep if c in df.columns]]
     day = date.today().isoformat()
     out_dir = os.path.join(SILVER_DIR, f"dt={day}")
@@ -87,16 +75,13 @@ def store_silver(df):
 
 
 def main():
-    print("=" * 60)
-    print("Kaggle German jobs -> silver")
-    print("=" * 60)
+    print("=" * 60); print("Kaggle German jobs -> silver"); print("=" * 60)
+    xw = EscoCrosswalk("reference/esco/occupations_de.csv", ILO_FILE)  # load once
     df = ingest()
-    df = transform(df)
-    df = enrich(df)
+    df = transform(df, xw)          # was: transform(df); df = enrich(df)
     store_silver(df)
-
-    # quick preview of the headline metric
-    mapped = df[df["isco08_4digit"] != "unmapped"]
+    mapped = df[df["match_method"] != "unmapped"]   # was: df["isco08_4digit"] != "unmapped"
+    
     print("\n[preview] AI-skill % by exposure band × year")
     piv = (mapped.groupby(["exposure_category", "year"])["has_ai_skill"]
            .mean().mul(100).round(1).reset_index())

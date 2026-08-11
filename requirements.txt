@@ -1,3 +1,6 @@
+# Semantic ESCO crosswalk — dependencies
+sentence-transformers>=2.7.0
+torch>=2.0            # CPU build is fine for a few thousand titles
+numpy>=1.24
 pandas>=2.0
-requests>=2.31
-rapidfuzz>=3.0
+ 
