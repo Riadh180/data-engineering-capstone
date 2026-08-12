@@ -93,6 +93,8 @@ ALIAS = {
     "machine learning engineer": "2512", "ai engineer": "2512",
     "deep learning": "2512", "data engineer": "2512", "bi developer": "2512",
     "mlops": "2512", "mlops engineer": "2512",
+    "oberarzt": "2212", "assistenzarzt": "2212",
+    "facharzt": "2212", "chefarzt": "2212",
 }   # keys already in normalized form (lowercase, no wrappers, no punctuation)
 GENDER = re.compile(r"\(?\s*m\s*[/|]\s*w\s*[/|]\s*(d|x)\s*\)?", re.I)   # (m/w/d)
 SUFX   = re.compile(r"(:in|/-?in|\*in|/in|\-in)\b", re.I)              # gender suffixes
@@ -267,6 +269,12 @@ class EscoCrosswalk:
                     recs[k] = rec
                 else:
                     recs[k] = self._unmapped(norms[k], s)
+        # guard: a match to an ISCO code with no exposure anywhere in ILO
+        # (armed forces, other out-of-universe groups) is not a usable mapping
+        for k, rec in enumerate(recs):
+            if rec["match_method"] != "unmapped" and rec.get("mean_task_score") is None:
+                recs[k] = self._unmapped(rec["norm_title"], rec["match_score"])
+
         out = pd.DataFrame(recs)
         if "needs_review" not in out:
             out["needs_review"] = False
