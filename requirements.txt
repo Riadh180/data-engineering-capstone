@@ -3,4 +3,4 @@ sentence-transformers>=2.7.0
 torch>=2.0            # CPU build is fine for a few thousand titles
 numpy>=1.24
 pandas>=2.0
- 
+pydriller==2.7
