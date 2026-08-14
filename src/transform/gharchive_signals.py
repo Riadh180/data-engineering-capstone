@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-GH Archive - AI-authorship signal parser (proof of concept, v3)
-===============================================================
+GH Archive - AI-authorship signal parser (v4: multi-file + totals denominator)
+===============================================================================
 
-Reads a GH Archive file (one JSON event per line, .json or .json.gz), walks the
+Reads GH Archive file(s) (one JSON event per line, .json or .json.gz), walks the
 commits and pull requests, and flags AI-authorship signals.
 
 Signals computable from GH Archive events:
@@ -14,6 +14,9 @@ Signals computable from GH Archive events:
                   (checked once per commit -> no double counting)
   bot_actor     - the pushing account is any bot (context only)
   ai_agent_pr   - a pull request opened by a known AI agent account
+
+Also writes totals.csv (month, n_commits, n_pr_events) — the DENOMINATOR needed
+to turn match counts into an ai_share rate.
 
 Not in GH Archive events (needs a follow-up GitHub API / diff call):
   dependency    - adding openai/langchain/... to a deps file (no file list here)
@@ -28,7 +31,6 @@ import re
 from collections import Counter
 
 # Known AI coding-agent identity STEMS (matched after normalization).
-# Stems (no brackets) so they catch "<stem>[bot]" and URL-encoded "<stem>%5Bbot%5D".
 AI_AGENT_STEMS = {
     "copilot-swe-agent", "github-copilot", "devin-ai-integration",
     "cursoragent", "cursor[bot]", "sweep-ai", "codegen-sh",
@@ -85,95 +87,108 @@ def commit_signals(message: str):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("path", help="GH Archive file (.json or .json.gz)")
-    ap.add_argument("--csv", default="data/silver/gharchive_matches.csv")
+    ap.add_argument("paths", nargs="+", help="GH Archive file(s) (.json or .json.gz)")
+    ap.add_argument("--csv", default="data/silver/gharchive/matches.csv")
+    ap.add_argument("--totals", default="data/silver/gharchive/totals.csv")
     args = ap.parse_args()
 
     stats = Counter()
+    month_commits = Counter()   # month -> commits scanned  (denominator)
+    month_prs = Counter()       # month -> PR events scanned (denominator)
     examples = {"coauthor_ai": [], "selfadmit_phrase": [], "ai_agent": [], "ai_agent_pr": []}
     csv_rows = []
+    seen_sha = set()          # parse-time dedup of replayed commits
 
-    with open_any(args.path) as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                ev = json.loads(line)
-            except json.JSONDecodeError:
-                stats["malformed_lines"] += 1
-                continue
+    for path in args.paths:
+        with open_any(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    stats["malformed_lines"] += 1
+                    continue
 
-            stats["events_total"] += 1
-            etype = ev.get("type")
-            actor = (ev.get("actor") or {}).get("login", "")
-            actor_is_bot = actor.endswith("[bot]")
-            actor_is_agent = is_ai_agent(actor)
-            created = ev.get("created_at", "")
-            repo = (ev.get("repo") or {}).get("name", "")
+                stats["events_total"] += 1
+                etype = ev.get("type")
+                actor = (ev.get("actor") or {}).get("login", "")
+                actor_is_bot = actor.endswith("[bot]")
+                actor_is_agent = is_ai_agent(actor)
+                created = ev.get("created_at", "")
+                month = created[:7]
+                repo = (ev.get("repo") or {}).get("name", "")
 
-            if etype == "PushEvent":
-                stats["push_events"] += 1
-                for c in (ev.get("payload") or {}).get("commits", []) or []:
-                    stats["commits_total"] += 1
-                    msg = c.get("message", "")
-                    author = c.get("author") or {}
-                    author_name = author.get("name", "")
-                    author_email = author.get("email", "")
+                if etype == "PushEvent":
+                    stats["push_events"] += 1
+                    for c in (ev.get("payload") or {}).get("commits", []) or []:
+                        sha = c.get("sha", "")
+                        if sha and sha in seen_sha:
+                            continue                       # replayed commit, already counted
+                        if sha:
+                            seen_sha.add(sha)
+                        stats["commits_total"] += 1
+                        month_commits[month] += 1          # <-- denominator (distinct commits)
+                        msg = c.get("message", "")
+                        author = c.get("author") or {}
+                        author_name = author.get("name", "")
+                        author_email = author.get("email", "")
 
-                    # --- agent check: actor OR commit author, evaluated ONCE ---
-                    commit_is_agent = (
-                        actor_is_agent
-                        or is_ai_agent(author_name)
-                        or is_ai_agent(author_email)
-                    )
+                        commit_is_agent = (
+                            actor_is_agent
+                            or is_ai_agent(author_name)
+                            or is_ai_agent(author_email)
+                        )
 
-                    sig = commit_signals(msg)
+                        sig = commit_signals(msg)
 
-                    if actor_is_bot:
-                        stats["bot_actor_commits"] += 1
-                    if commit_is_agent:
-                        stats["ai_agent_commits"] += 1          # counted once per commit
-                        if len(examples["ai_agent"]) < 10:
-                            who = actor if actor_is_agent else author_name
-                            examples["ai_agent"].append(f"{who} :: {msg[:65]}")
-                    if sig["coauthor_ai"]:
-                        stats["coauthor_ai"] += 1
-                        if len(examples["coauthor_ai"]) < 10:
-                            examples["coauthor_ai"].append(msg[:120].replace("\n", " "))
-                    if sig["coauthor_bot"]:
-                        stats["coauthor_bot"] += 1
-                    if sig["selfadmit_phrase"]:
-                        stats["selfadmit_phrase"] += 1
-                        if len(examples["selfadmit_phrase"]) < 10:
-                            examples["selfadmit_phrase"].append(msg[:100].replace("\n", " "))
-                    if sig["selfadmit_toolname"]:
-                        stats["selfadmit_toolname"] += 1
+                        if actor_is_bot:
+                            stats["bot_actor_commits"] += 1
+                        if commit_is_agent:
+                            stats["ai_agent_commits"] += 1
+                            if len(examples["ai_agent"]) < 10:
+                                who = actor if actor_is_agent else author_name
+                                examples["ai_agent"].append(f"{who} :: {msg[:65]}")
+                        if sig["coauthor_ai"]:
+                            stats["coauthor_ai"] += 1
+                            if len(examples["coauthor_ai"]) < 10:
+                                examples["coauthor_ai"].append(msg[:120].replace("\n", " "))
+                        if sig["coauthor_bot"]:
+                            stats["coauthor_bot"] += 1
+                        if sig["selfadmit_phrase"]:
+                            stats["selfadmit_phrase"] += 1
+                            if len(examples["selfadmit_phrase"]) < 10:
+                                examples["selfadmit_phrase"].append(msg[:100].replace("\n", " "))
+                        if sig["selfadmit_toolname"]:
+                            stats["selfadmit_toolname"] += 1
 
-                    if sig["coauthor_ai"] or sig["selfadmit_phrase"] or commit_is_agent:
-                        csv_rows.append({
-                            "created_at": created, "repo": repo, "actor": actor,
-                            "author_name": author_name, "sha": c.get("sha", ""),
-                            "coauthor_ai": sig["coauthor_ai"],
-                            "selfadmit_phrase": sig["selfadmit_phrase"],
-                            "ai_agent": commit_is_agent,
-                            "message": msg[:200].replace("\n", " "),
-                        })
+                        if sig["coauthor_ai"] or sig["selfadmit_phrase"] or commit_is_agent:
+                            csv_rows.append({
+                                "created_at": created, "month": month, "repo": repo,
+                                "actor": actor, "author_name": author_name,
+                                "sha": sha,
+                                "coauthor_ai": sig["coauthor_ai"],
+                                "selfadmit_phrase": sig["selfadmit_phrase"],
+                                "ai_agent": commit_is_agent,
+                                "message": msg[:200].replace("\n", " "),
+                            })
 
-            elif etype == "PullRequestEvent":
-                stats["pr_events"] += 1
-                pr = (ev.get("payload") or {}).get("pull_request") or {}
-                pr_author = (pr.get("user") or {}).get("login", "")
-                if is_ai_agent(pr_author) or pr_author.endswith("[bot]"):
-                    stats["bot_pr"] += 1
-                if is_ai_agent(pr_author):
-                    stats["ai_agent_pr"] += 1
-                    if len(examples["ai_agent_pr"]) < 10:
-                        examples["ai_agent_pr"].append(f"{pr_author} :: {pr.get('title','')[:65]}")
+                elif etype == "PullRequestEvent":
+                    stats["pr_events"] += 1
+                    month_prs[month] += 1                  # <-- denominator
+                    pr = (ev.get("payload") or {}).get("pull_request") or {}
+                    pr_author = (pr.get("user") or {}).get("login", "")
+                    if is_ai_agent(pr_author) or pr_author.endswith("[bot]"):
+                        stats["bot_pr"] += 1
+                    if is_ai_agent(pr_author):
+                        stats["ai_agent_pr"] += 1
+                        if len(examples["ai_agent_pr"]) < 10:
+                            examples["ai_agent_pr"].append(f"{pr_author} :: {pr.get('title','')[:65]}")
 
     # ---- report ----
     print("=" * 64)
-    print(f"GH Archive AI-authorship signals  —  {args.path}")
+    print(f"GH Archive AI-authorship signals  —  {len(args.paths)} file(s)")
     print("=" * 64)
     print(f"events total ............ {stats['events_total']:,}")
     print(f"  push events ........... {stats['push_events']:,}")
@@ -194,7 +209,7 @@ def main():
     if stats["commits_total"]:
         rate = 100 * (stats["coauthor_ai"] + stats["ai_agent_commits"]) / stats["commits_total"]
         print("-" * 64)
-        print(f"  --> strong-signal rate  {rate:.4f}%  of commits this file")
+        print(f"  --> strong-signal rate  {rate:.4f}%  of commits (all files)")
     print("-" * 64)
     for key, label in [("coauthor_ai", "Co-authored-by AI examples"),
                        ("selfadmit_phrase", "Self-admitted examples"),
@@ -205,6 +220,7 @@ def main():
             for e in examples[key]:
                 print(f"   • {e}")
 
+    # ---- write matches ----
     if csv_rows:
         os.makedirs(os.path.dirname(args.csv) or ".", exist_ok=True)
         with open(args.csv, "w", newline="", encoding="utf-8") as f:
@@ -212,6 +228,16 @@ def main():
             w.writeheader()
             w.writerows(csv_rows)
         print(f"\nwrote {len(csv_rows)} matched commits -> {args.csv}")
+
+    # ---- write totals (denominator) ----
+    os.makedirs(os.path.dirname(args.totals) or ".", exist_ok=True)
+    months = sorted(set(month_commits) | set(month_prs))
+    with open(args.totals, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["month", "n_commits", "n_pr_events"])
+        for m in months:
+            w.writerow([m, month_commits[m], month_prs[m]])
+    print(f"wrote {len(months)} month-totals -> {args.totals}")
 
 
 if __name__ == "__main__":
