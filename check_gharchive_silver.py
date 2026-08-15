@@ -19,6 +19,7 @@ import pandas as pd
 
 REVIEW_STATES = {"approved", "changes_requested", "commented", "dismissed", ""}
 CLASSES = {"ai_agent", "baseline"}
+CHURN_CLASSES = {"ai_agent", "ai_coauthor", "human"}
 
 fails = []          # collected failure messages -> non-zero exit
 def check(ok, label, detail=""):
@@ -103,6 +104,27 @@ def main():
         check(set(r["pr_author_class"].unique()) <= CLASSES, "pr_author_class valid")
     else:
         print("    (no review rows)")
+
+    # ---------------- [6] churn: churn_events.csv ----------------
+    print("\n[6] CHURN — churn_events.csv")
+    cpath = os.path.join(a.silver, "churn", "churn_events.csv")
+    if os.path.exists(cpath):
+        ch = pd.read_csv(cpath)
+        need = {"repo", "sha", "author_class", "file", "churn", "followup_churn"}
+        check(need.issubset(ch.columns), "required columns present",
+              f"{len(ch)} rows" if need.issubset(ch.columns) else f"missing {need - set(ch.columns)}")
+        check(ch[["sha", "author_class", "file"]].notna().all().all(),
+              "no null sha / author_class / file")
+        check(set(ch["author_class"].unique()) <= CHURN_CLASSES,
+              "author_class in {ai_agent, ai_coauthor, human}",
+              f"unexpected {set(ch['author_class'].unique()) - CHURN_CLASSES}")
+        check((ch["churn"] >= 0).all() and (ch["followup_churn"] >= 0).all(),
+              "churn and followup_churn >= 0")
+        # info: per-repo AI share (a finding, not a failure)
+        share = ch.assign(ai=ch.author_class != "human").groupby("repo").ai.mean().mul(100).round(1)
+        print("    AI share by repo:", share.to_dict())
+    else:
+        print("    (no churn_events.csv — churn pipeline not run)")
 
     # ---------------- verdict ----------------
     print("\n" + "=" * 62)
