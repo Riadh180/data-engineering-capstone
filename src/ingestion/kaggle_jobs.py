@@ -42,18 +42,24 @@ def transform(df, xw):
     df = df.drop(columns=[c for c in mapped.columns if c in df.columns], errors="ignore")
     df = pd.concat([df.reset_index(drop=True), mapped.reset_index(drop=True)], axis=1)
 
-    # AI-skill tag on the FULL description (unchanged — this is the point of this dataset)
-    flags, terms = [], []
+    # AI-skill tag on the FULL description — split into USAGE vs BUILDING
+    usage_flags, build_flags, terms = [], [], []
     for title, desc in zip(df["title"].fillna(""), df["description_text"].fillna("")):
-        f, ts = detect_ai_skill(title, desc)
-        flags.append(f); terms.append(";".join(ts))
-    df["has_ai_skill"] = flags
+        usage, building, ts = detect_ai_skill(title, desc)
+        usage_flags.append(usage)
+        build_flags.append(building)
+        terms.append(";".join(ts))
+    df["has_ai_usage"] = usage_flags
+    df["has_ai_building"] = build_flags
+    df["has_ai_skill"] = df["has_ai_usage"] | df["has_ai_building"]   # back-compat (usage OR building)
     df["ai_skill_terms"] = terms
 
-    print("[2] TRANSFORM: crosswalk (ESCO semantic) + AI-skill tag")
+    print("[2] TRANSFORM: crosswalk (ESCO semantic) + AI-skill tag (usage/building)")
     print(f"    match_method: {df['match_method'].value_counts().to_dict()}")
-    print(f"    AI-skill: {int(df['has_ai_skill'].sum())}/{len(df)} "
-          f"({100*df['has_ai_skill'].mean():.1f}%)")
+    print(f"    AI-usage:    {int(df['has_ai_usage'].sum())}/{len(df)} "
+          f"({100*df['has_ai_usage'].mean():.1f}%)")
+    print(f"    AI-building: {int(df['has_ai_building'].sum())}/{len(df)} "
+          f"({100*df['has_ai_building'].mean():.1f}%)")
     return df
 
 
@@ -61,7 +67,8 @@ def store_silver(df):
     keep = ["job_id", "title", "normalized_title", "company", "city",
         "country_code", "date_published", "year", "has_salary_info",
         "isco08_4digit", "match_method", "matched_label", "match_score",
-        "needs_review", "has_ai_skill", "ai_skill_terms",
+        "needs_review", "has_ai_usage", "has_ai_building", "has_ai_skill",
+        "ai_skill_terms",
         "occupation_name", "exposure_category", "exposure_order",
         "mean_task_score", "sd_task_score", "exposure_imputed"]
     df = df[[c for c in keep if c in df.columns]]
@@ -81,9 +88,9 @@ def main():
     df = transform(df, xw)          # was: transform(df); df = enrich(df)
     store_silver(df)
     mapped = df[df["match_method"] != "unmapped"]   # was: df["isco08_4digit"] != "unmapped"
-    
-    print("\n[preview] AI-skill % by exposure band × year")
-    piv = (mapped.groupby(["exposure_category", "year"])["has_ai_skill"]
+
+    print("\n[preview] AI-USAGE % by exposure band x year")
+    piv = (mapped.groupby(["exposure_category", "year"])["has_ai_usage"]
            .mean().mul(100).round(1).reset_index())
     print(piv.to_string(index=False))
 
