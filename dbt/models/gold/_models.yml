@@ -1,0 +1,20 @@
+version: 2
+models:
+  - name: jobs_by_exposure_band_year
+    description: AI usage/building demand by dataset x exposure band x year.
+    columns:
+      - name: dataset
+        tests: [not_null, {accepted_values: {values: ['general','tech']}}]
+      - name: n_postings
+        tests: [not_null]
+      - name: ai_usage_rate
+        description: mean(has_ai_usage), 0..1
+      - name: ai_building_rate
+        description: mean(has_ai_building), 0..1
+  - name: jobs_by_occupation
+    description: Occupation-level jobs gold (grain for correlations).
+    columns:
+      - name: isco08_4digit
+        tests: [not_null]
+      - name: n_postings
+        tests: [not_null]

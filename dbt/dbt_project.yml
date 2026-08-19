@@ -1,0 +1,9 @@
+name: aiwork
+version: "1.0"
+config-version: 2
+profile: aiwork
+model-paths: ["models"]
+models:
+  aiwork:
+    gold:
+      +materialized: table

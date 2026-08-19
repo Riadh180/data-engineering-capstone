@@ -1,0 +1,12 @@
+aiwork:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('PGHOST', 'localhost') }}"
+      port: "{{ env_var('PGPORT', '5432') | int }}"
+      user: "{{ env_var('PGUSER', 'aiwork') }}"
+      password: "{{ env_var('PGPASSWORD', 'aiwork') }}"
+      dbname: "{{ env_var('PGDATABASE', 'aiwork') }}"
+      schema: gold
+      threads: 4
