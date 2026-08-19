@@ -1,5 +1,21 @@
-# Local-first stack. Step 1: Postgres serving warehouse.
-# (Airflow, MinIO, app will be added as later services.)
+# Local-first stack: Postgres warehouse + Airflow orchestration.
+# (MinIO/S3 can be added as a later service.)
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.10.2-python3.11
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://aiwork:aiwork@postgres:5432/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    PIP_ADDITIONAL_REQUIREMENTS: "dbt-postgres>=1.7 sentence-transformers pydriller python-dotenv sqlalchemy psycopg2-binary"
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - .:/opt/airflow/project          # mount the whole project so DAG tasks can run it
+  depends_on:
+    postgres:
+      condition: service_healthy
+
 services:
   postgres:
     image: postgres:16
@@ -12,11 +28,43 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./airflow/init-airflow-db.sql:/docker-entrypoint-initdb.d/init-airflow-db.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U aiwork"]
       interval: 5s
       timeout: 3s
       retries: 5
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate &&
+        airflow users create --username admin --password admin \
+          --firstname a --lastname b --role Admin --email admin@example.com
+    restart: on-failure
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: aiwork_airflow_web
+    command: webserver
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: aiwork_airflow_scheduler
+    command: scheduler
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:
