@@ -1,13 +1,12 @@
 # Local-first stack: Postgres warehouse + Airflow orchestration.
 # (MinIO/S3 can be added as a later service.)
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.10.2-python3.11
+  build: ./airflow
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://aiwork:aiwork@postgres:5432/airflow
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
-    PIP_ADDITIONAL_REQUIREMENTS: "dbt-postgres>=1.7 sentence-transformers pydriller python-dotenv sqlalchemy psycopg2-binary"
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs

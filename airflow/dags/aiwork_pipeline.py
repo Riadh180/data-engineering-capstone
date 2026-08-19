@@ -1,20 +1,22 @@
 """
 Airflow DAG: AI x Work pipeline (orchestration layer).
 
-Flow (the warehouse/transform pipeline, which is light and reliable in-container):
-  load_silver ─► dbt_run ─► dbt_test ─► load_gold
+Flow:
+  load_jobs_silver ─┐
+                    ├─► dbt_run ─► dbt_test
+  load_gh_silver   ─┘
 
-INGESTION IS A HOST STEP, ON PURPOSE.
-The ingesters load a multilingual embedding model (sentence-transformers/torch,
-~1GB) for the ESCO crosswalk — heavy, GPU-friendly, and slow to pull inside an
-Airflow worker. Standard practice is to keep such ML-heavy extraction out of the
-orchestrator. Run ingestion on the host (or a dedicated worker) to refresh silver:
+Loads both pillars' silver into Postgres, then dbt builds ALL gold tables
+(jobs + github) as SQL models and tests them. Gold lives in Postgres, produced
+by dbt — there is no separate gold-CSV load step.
 
+SILVER CREATION RUNS ON THE HOST (heavy, on purpose):
+  - jobs:   ESCO crosswalk uses a ~1GB embedding model (sentence-transformers)
+  - github: GH Archive parsing + PyDriller repo clones
+Refresh silver on the host, then this DAG loads it and rebuilds gold:
     python -m src.ingestion.kaggle_jobs
     python -m src.ingestion.tech_jobs
-
-Then this DAG loads silver -> Postgres, rebuilds gold via dbt (with tests), and
-publishes gold. Each task shells out to the existing, tested code.
+    # (+ the github silver scripts: gharchive_signals / pr_signals / churn_signals)
 """
 from datetime import datetime, timedelta
 from airflow import DAG
@@ -27,17 +29,21 @@ default_args = {"owner": "aiwork", "retries": 1, "retry_delay": timedelta(minute
 
 with DAG(
     dag_id="aiwork_pipeline",
-    description="load silver -> dbt run/test -> load gold (ingestion runs on host)",
+    description="load jobs+github silver -> dbt run/test (gold built by dbt)",
     default_args=default_args,
     start_date=datetime(2026, 1, 1),
-    schedule="@weekly",
+    schedule=None,          # static snapshot data: manual/on-demand, not scheduled
     catchup=False,
     tags=["capstone", "medallion"],
 ) as dag:
 
-    load_silver = BashOperator(
-        task_id="load_silver",
+    load_jobs_silver = BashOperator(
+        task_id="load_jobs_silver",
         bash_command=f"cd {PROJECT} && {ENV} python -m src.db.load_silver_to_postgres",
+    )
+    load_gh_silver = BashOperator(
+        task_id="load_gh_silver",
+        bash_command=f"cd {PROJECT} && {ENV} python -m src.db.load_github_silver_to_postgres",
     )
     dbt_run = BashOperator(
         task_id="dbt_run",
@@ -47,9 +53,5 @@ with DAG(
         task_id="dbt_test",
         bash_command=f"cd {PROJECT}/dbt && {ENV} dbt test --profiles-dir .",
     )
-    load_gold = BashOperator(
-        task_id="load_gold",
-        bash_command=f"cd {PROJECT} && {ENV} python -m src.db.load_gold_to_postgres",
-    )
 
-    load_silver >> dbt_run >> dbt_test >> load_gold
+    [load_jobs_silver, load_gh_silver] >> dbt_run >> dbt_test
