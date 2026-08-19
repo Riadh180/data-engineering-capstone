@@ -4,7 +4,8 @@ Ingest the German TECH job postings (job_postings_raw.csv) into silver.
 
 Same shape as kaggle_jobs.py but for the tech dataset:
   - crosswalk title_clean -> ISCO-08 by MEANING (ESCO semantic)
-  - AI-skill tag from skills_extracted + description_clean (denser signal)
+  - AI-skill tag from skills_extracted + description_clean (denser signal),
+    split into USAGE (uses AI as a tool) vs BUILDING (engineers AI/ML)
   - exposure is attached by the crosswalk (no separate merge) -> dated silver
 
 Run:  python3 -m src.ingestion.tech_jobs
@@ -42,18 +43,24 @@ def main():
     df = df.drop(columns=[c for c in mapped.columns if c in df.columns], errors="ignore")
     df = pd.concat([df.reset_index(drop=True), mapped.reset_index(drop=True)], axis=1)
 
-    # AI-skill tag from skills_extracted + description_clean (denser signal)
-    flags, terms = [], []
+    # AI-skill tag from skills_extracted + description_clean — split usage/building
+    usage_flags, build_flags, terms = [], [], []
     for sk, desc in zip(df["skills_extracted"].fillna(""), df["description_clean"].fillna("")):
-        f, ts = detect_ai_skill(sk, desc)
-        flags.append(f); terms.append(";".join(ts))
-    df["has_ai_skill"] = flags
+        usage, building, ts = detect_ai_skill(sk, desc)
+        usage_flags.append(usage)
+        build_flags.append(building)
+        terms.append(";".join(ts))
+    df["has_ai_usage"] = usage_flags
+    df["has_ai_building"] = build_flags
+    df["has_ai_skill"] = df["has_ai_usage"] | df["has_ai_building"]   # back-compat (usage OR building)
     df["ai_skill_terms"] = terms
 
-    print("[2] TRANSFORM: crosswalk (ESCO semantic) + AI-skill tag")
+    print("[2] TRANSFORM: crosswalk (ESCO semantic) + AI-skill tag (usage/building)")
     print(f"    match_method: {df['match_method'].value_counts().to_dict()}")
-    print(f"    AI-skill: {int(df['has_ai_skill'].sum())}/{len(df)} "
-          f"({100*df['has_ai_skill'].mean():.1f}%)")
+    print(f"    AI-usage:    {int(df['has_ai_usage'].sum())}/{len(df)} "
+          f"({100*df['has_ai_usage'].mean():.1f}%)")
+    print(f"    AI-building: {int(df['has_ai_building'].sum())}/{len(df)} "
+          f"({100*df['has_ai_building'].mean():.1f}%)")
 
     # (exposure already attached by the crosswalk — no separate ILO merge)
 
@@ -61,9 +68,9 @@ def main():
     keep = ["posting_id", "title_clean", "city", "posted_date", "year",
             "seniority", "cluster_name", "isco08_4digit", "match_method",
             "matched_label", "match_score", "needs_review",
-            "has_ai_skill", "ai_skill_terms", "occupation_name",
-            "exposure_category", "exposure_order", "mean_task_score",
-            "sd_task_score", "exposure_imputed"]
+            "has_ai_usage", "has_ai_building", "has_ai_skill", "ai_skill_terms",
+            "occupation_name", "exposure_category", "exposure_order",
+            "mean_task_score", "sd_task_score", "exposure_imputed"]
     df = df[[c for c in keep if c in df.columns]]
     day = date.today().isoformat()
     out_dir = os.path.join(SILVER_DIR, f"dt={day}")
@@ -72,11 +79,13 @@ def main():
     df.to_csv(path, index=False)
     print(f"[3] SILVER: wrote {len(df)} rows -> {path}")
 
-    # preview: AI-skill by exposure band (unmapped now = match_method, not a string code)
+    # preview: usage vs building by exposure band
     mapped_rows = df[df["match_method"] != "unmapped"]
-    print("\n[preview] AI-skill % by exposure band")
-    g = (mapped_rows.groupby("exposure_category")["has_ai_skill"]
-         .agg(postings="size", ai_pct=lambda x: round(100 * x.mean(), 1)))
+    print("\n[preview] AI-usage / AI-building % by exposure band")
+    g = (mapped_rows.groupby("exposure_category")
+         .agg(postings=("has_ai_usage", "size"),
+              usage_pct=("has_ai_usage", lambda x: round(100 * x.mean(), 1)),
+              building_pct=("has_ai_building", lambda x: round(100 * x.mean(), 1))))
     print(g.to_string())
 
 
