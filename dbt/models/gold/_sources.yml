@@ -5,3 +5,9 @@ sources:
     tables:
       - name: jobs_kaggle
       - name: jobs_tech
+      - name: gh_matches
+      - name: gh_totals
+      - name: gh_pr_outcomes
+      - name: gh_pr_reviews
+      - name: gh_churn_events
+ 
