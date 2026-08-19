@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """app.py — AI x Work capstone dashboard (interactive serving layer)."""
 import os
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # read .env so GOLD_BACKEND / PG* are set automatically
+except ImportError:
+    pass
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -25,16 +30,37 @@ def base(fig, title=None, h=380):
                                  y=0.97, yanchor="top", x=0.01, xanchor="left") if title else None)
     return fig
 
+# The SINGLE data-source boundary. GOLD_BACKEND=postgres reads the warehouse;
+# anything else reads the gold CSVs. Swapping backends changes nothing else.
+GOLD_BACKEND = os.environ.get("GOLD_BACKEND", "csv")
+
+_GOLD_MAP = {"adopt_year": "github_adoption_by_year",
+             "adopt_month": "github_adoption_by_month",
+             "jobs_band": "jobs_by_exposure_band_year",
+             "merge": "github_merge_rate", "cr": "github_changes_requested",
+             "churn": "github_churn_by_bucket", "ai_repo": "github_ai_share_by_repo"}
+
 @st.cache_data
 def load_gold(gold_dir=GOLD):
+    if GOLD_BACKEND == "postgres":
+        from sqlalchemy import create_engine
+        import pandas as _pd
+        u=os.environ.get("PGUSER","aiwork"); p=os.environ.get("PGPASSWORD","aiwork")
+        h=os.environ.get("PGHOST","localhost"); pt=os.environ.get("PGPORT","5432")
+        db=os.environ.get("PGDATABASE","aiwork")
+        eng=create_engine(f"postgresql+psycopg2://{u}:{p}@{h}:{pt}/{db}")
+        out={}
+        for key, tbl in _GOLD_MAP.items():
+            try:
+                out[key]=_pd.read_sql(f"select * from gold.{tbl}", eng)
+            except Exception:
+                out[key]=_pd.DataFrame()
+        return out
+    # CSV backend (default)
     def rd(name):
-        p = os.path.join(gold_dir, name)
+        p = os.path.join(gold_dir, name + ".csv")
         return pd.read_csv(p, dtype={"isco08_4digit": str}) if os.path.exists(p) else pd.DataFrame()
-    return {"adopt_year": rd("github_adoption_by_year.csv"),
-            "adopt_month": rd("github_adoption_by_month.csv"),
-            "jobs_band": rd("jobs_by_exposure_band_year.csv"),
-            "merge": rd("github_merge_rate.csv"), "cr": rd("github_changes_requested.csv"),
-            "churn": rd("github_churn_by_bucket.csv"), "ai_repo": rd("github_ai_share_by_repo.csv")}
+    return {k: rd(v) for k, v in _GOLD_MAP.items()}
 
 SILVER_JOBS = os.environ.get("SILVER_JOBS_DIR", "data/silver/kaggle")
 

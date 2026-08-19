@@ -1,6 +1,14 @@
-# Semantic ESCO crosswalk — dependencies
-sentence-transformers>=2.7.0
-torch>=2.0            # CPU build is fine for a few thousand titles
-numpy>=1.24
+# --- core pipeline ---
 pandas>=2.0
-pydriller==2.7
+numpy>=1.24
+sentence-transformers>=2.2      # ESCO semantic crosswalk (multilingual-e5)
+pydriller>=2.5                  # churn signals (git history)
+ 
+# --- serving / dashboard ---
+streamlit>=1.36
+plotly>=5.20
+ 
+# --- warehouse (Postgres serving layer) ---
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+python-dotenv>=1.0              # auto-load .env (GOLD_BACKEND, PG*)
