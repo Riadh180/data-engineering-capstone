@@ -1,248 +1,219 @@
-# AI & the Software Job Market — Data Engineering Capstone
+# AI × Work — Data Engineering Capstone
 
-A data pipeline that measures how AI is reshaping software work, by joining two live
-sources on a shared timeline: **what employers demand** (job postings) and **what is
-happening in real code** (public GitHub activity). The exposure lens comes from
-research data keyed to the international occupation standard.
+How is AI reshaping **code** and the **German job market**? This project builds a
+full **bronze → silver → gold** data pipeline over two pillars and serves the
+findings through an interactive dashboard.
 
-> **Scope note:** the deliverable is the *pipeline*. Dashboards, extra sources, and
-> modelling are extensions. The findings are framed as **trends and correlations,
-> honestly caveated — not proof of causation.**
+*neuefische / SPICED Data-Engineering bootcamp — Ginger-Graphs cohort.*
 
 ---
 
-## The question
+## The two questions
 
-Is AI **substituting** software workers (demand for exposed roles falls) or
-**augmenting** them (demand rises)? The pipeline surfaces directional evidence by
-tracking, over time:
+**Jobs pillar** — how AI is affecting existing jobs:
+- Do AI-*exposed* occupations rise or decline in demand over time?
+- Do jobs increasingly want humans who can **use** AI? (vs. **build** it)
+- Are AI-*building* roles a distinct, growing population?
 
-- **Labour side (strong data):** the share of postings demanding AI skills, the
-  salary premium those postings carry, and demand by AI-exposure band.
-- **Code side (supporting signal, honestly limited):** the *visible* footprint of
-  AI authorship in commits and pull requests — a floor, since invisible IDE
-  autocomplete leaves no trace.
+**Code pillar** — how AI is entering software:
+- How fast is attributable AI authorship growing in real repos?
+- Are AI-authored PRs accepted less — and is that quality or process?
+- Is AI-touched code reworked more (less durable) than human code?
 
----
+## Headline findings (all with honest caveats — see the dashboard)
 
-## Data sources
-
-| # | Source | Role | Type | Join key | Stage | Status |
-|---|--------|------|------|----------|-------|--------|
-| 1 | **Adzuna API** | job postings, AI-skill demand, salary | REST/JSON (free) | title → ISCO | Core | ✅ verified |
-| 2 | **GH Archive** | AI-authorship signals in code | hourly JSON event log | — | Core | ✅ verified |
-| 3 | **ILO WP140 exposure** | AI-exposure score per occupation | static CSV | ISCO-08 | Core | ✅ built |
-| 4 | Adzuna `/history` | recent salary trend by category | REST/JSON | category → ISCO | Backdrop | ✅ verified (~24 mo only) |
-| 5 | **Eurostat** | pre-AI employment history (2011+) | API | ISCO-08 / NACE | Backdrop | ✅ verified |
-| 6 | Destatis / BA | German labour backdrop | API | ISCO / KldB | Backdrop | ✅ verified |
-| 7 | ESCO | multilingual title → ISCO (semantic crosswalk) | CSV download | ISCO-08 | Stretch | ✅ verified |
-| 8 | Anthropic Economic Index | time-varying AI-usage lens | CSV | O*NET/ISCO | Optional | noted |
-
-**MVP uses sources 1–3 only.** 4–6 are the historical/backdrop tier; Eurostat (not
-Adzuna) is the real pre-AI demand anchor. 7–8 are stretch.
+- **Code adoption**: attributable-AI commit share ~20× 2024→2025 (agents went
+  mainstream in 2025). Git-attributable only — undercounts silent Copilot.
+- **Jobs — using AI**: ~0.6% of general German ads ask for AI-usage skills,
+  emerging in 2026, concentrated in AI-exposed roles. Small but real.
+- **Jobs — building AI**: ~43% of *tech* roles; ~0% general. A clear divide.
+- **PR acceptance**: agent PRs merge ~10 pts less at equal size — but draw no
+  more change-requests → process/trust, not worse code.
+- **Code durability**: AI-touched code reworked *no more* than human at equal
+  size. Contradicts the "AI is sloppier" prior.
 
 ---
 
-## Pipeline
-
-Two branches, medallion layers, meeting at the serving layer on a shared timeline.
+## Architecture (medallion + modern stack)
 
 ```
-Adzuna API ─┐                         ┌─ bronze (raw, immutable)
-            ├─ ingest ─────────────►  ├─ silver (crosswalk → ISCO, AI-skill tag)
-GH Archive ─┘                         └─ gold   (star schema: fact + dims)
-ILO exposure CSV ───────────────────►  joined on ISCO in silver/gold
-                                        │
-                                        └─► serving: demand & salary by exposure band,
-                                            AI-authorship trend, and the two overlaid
+          BRONZE (raw)         SILVER (clean, Python)      GOLD (aggregated, dbt/SQL)
+ jobs:  Kaggle CSVs      →  ESCO crosswalk + AI tagger  →  jobs_by_exposure_band_year
+ code:  GH Archive, repos →  signal parse + PyDriller    →  github_adoption / merge / churn ...
+                                     │                              │
+                                     ▼                              ▼
+                              Postgres  silver.*   ──dbt run──►  Postgres  gold.*
+                                     │                              │
+                              Airflow orchestrates          Streamlit dashboard
+                              (silver load → dbt → test)     (reads gold from Postgres)
 ```
 
-- **bronze** — exact raw pulls, partitioned by date. Never mutated.
-- **silver** — cleaned, deduplicated, crosswalked, tagged.
-- **gold** — `fact_job_postings` + `dim_occupation` (with exposure) + `dim_date` / `dim_country`.
+| Layer | Tool | Why |
+|---|---|---|
+| Storage / warehouse | **Postgres** (Docker) | `silver` + `gold` schemas |
+| Transformation | **dbt** (SQL models) | both pillars' gold as tested SQL |
+| Governance | **dbt tests** | not_null / accepted_values, etc. |
+| Orchestration | **Airflow** (Docker) | load silver → dbt run → dbt test |
+| Serving | **Streamlit + Plotly** | interactive charts, reads Postgres |
+| Containerization | **Docker Compose** | Postgres + Airflow in one stack |
+
+**Design split (important):** *silver creation is Python, gold is SQL/dbt.*
+Silver is procedural (ML embeddings for the ESCO crosswalk, regex AI-tagging,
+GH Archive parsing, git history) — SQL can't express it. Gold is set-based
+aggregation — dbt's home turf. Heavy silver steps run **on the host**; Airflow
+orchestrates the light warehouse flow.
 
 ---
 
-## Tech stack
-
-All local and free for the MVP; each tool has a real job (no tool for its own sake).
-
-- **Python + requests** — ingestion
-- **crosswalk (rules + category fallback; ESCO semantic = stretch)** — title → ISCO-08
-- **DuckDB** — warehouse (embedded, zero-cost)
-- **dbt-core** — transforms, tests, lineage
-- **PySpark** — the GH Archive (big-data) branch only
-- **Airflow** — orchestration
-- **Docker Compose** — containerisation
-- **Metabase / Streamlit** — serving / dashboard
-
-**Deliberately not used:** Kafka/streaming (postings are batch), paid cloud warehouses
-(DuckDB suffices). See ADRs for the reasoning.
-
----
-
-## Project structure
-
-```
-.
-├── README.md
-├── requirements.txt
-├── .env / .env.example        # Adzuna key (real .env git-ignored)
-├── docs/                      # architecture.md, runbook.md, adr/
-├── src/
-│   ├── ingestion/             # Adzuna pull, GH Archive reader → bronze
-│   └── transform/
-│       ├── crosswalk.py       # title → ISCO-08 (library)
-│       └── gharchive_signals.py
-├── reference/                 # static lookups (ILO exposure CSV) — committed
-├── data/                      # bronze / silver / gold — git-ignored
-└── tests/                     # unit tests (e.g. crosswalk assertions)
-```
-
----
-
-## Setup
+## Quickstart
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+# 0. deps + env
 pip install -r requirements.txt
-cp .env.example .env          # add ADZUNA_APP_ID / ADZUNA_APP_KEY
+cp env.example .env            # dev defaults; sets GOLD_BACKEND=postgres
+
+# 1. warehouse + orchestrator (needs Docker Desktop running)
+docker compose up -d --build   # Postgres + Airflow (first build ~2 min)
+
+# 2. (host, occasional) create silver — heavy ML/parsing
+python -m src.ingestion.kaggle_jobs
+python -m src.ingestion.tech_jobs
+#   + the github silver scripts (gharchive_signals / pr_signals / churn_signals)
+
+# 3. load silver + build gold (either via Airflow or by hand)
+python -m src.db.load_silver_to_postgres
+python -m src.db.load_github_silver_to_postgres
+cd dbt && dbt run --profiles-dir . && dbt test --profiles-dir . && cd ..
+
+# 4. dashboard
+streamlit run app.py           # http://localhost:8501
 ```
 
-## Run
+Airflow UI: http://localhost:8080 (admin/admin) — trigger `aiwork_pipeline`.
 
-```bash
-export $(grep -v '^#' .env | xargs)
-
-# Adzuna: ingest + crosswalk one or more categories
-python3 -m src.ingestion.poc_ai_jobs_pipeline it-jobs accounting-finance-jobs
-
-# GH Archive: score one hour of events for AI-authorship signals
-python3 src/transform/gharchive_signals.py data/bronze/gharchive/2025-06-02-15.json
+## Repo layout
 ```
-
----
-
-## AI-authorship signals (code side)
-
-Detected from GH Archive events, from strongest to noisiest:
-
-- **coauthor_ai** — `Co-authored-by:` trailer naming an AI tool (structured; strongest)
-- **ai_agent** — commit/PR by a known AI agent (Devin, Copilot-swe, Cursor…), checked on
-  actor *and* commit author, deduped per commit
-- **selfadmit** — prose admitting AI use (trend, not exact count)
-- *context only, not AI:* `coauthor_bot`, `bot_actor`, bare tool-name mentions
-
-**Interpretation:** these are a **floor**. A low absolute rate is expected; the value is
-the *trend over time* and the *composition* (e.g. agents do mostly fixes/refactors).
-
----
+src/ingestion/     bronze → silver (Python: crosswalk, tagging)
+src/transform/     ESCO crosswalk, AI-skill tagger, GH signal parsers
+src/db/            silver → Postgres loaders
+dbt/               gold as SQL models + tests (both pillars)
+airflow/           DAG + Dockerfile (dbt baked in)
+app.py             Streamlit dashboard
+docker-compose.yml Postgres + Airflow
+docs/              pipeline_reference.md, silver_schema.md, week notes
+```
 
 ## Honest limitations
-
-- AI-authorship signals **undercount** true AI use (invisible autocomplete).
-- Live Adzuna demand accrues **forward from launch**; deep pre-AI history comes from
-  Eurostat, at coarser (aggregate) granularity.
-- Findings are **correlation, not causation** — controlled via exposure-band comparison
-  groups, never claimed as proof over a short window.
-
----
-
-## Status
-
-- ✅ Both core sources verified on real data
-- ✅ ILO exposure reference built (ISCO-08)
-- ✅ Crosswalk + GH Archive signal parser working and independently audited
-- ▶ Next: crosswalk on non-software categories, then requirements sign-off, then build
-
-
-## Check Silver:
-```bash
-python3 -m src.ingestion.kaggle_jobs
-python3 -m src.ingestion.tech_jobs
-
-head -1 data/silver/kaggle/dt=*/de_jobs.csv | tr ',' '\n'
-# check coverage:
-python3 -c "import pandas as pd; d=pd.read_csv('data/silver/kaggle/dt=2026-08-10/de_jobs.csv'); print(round(100*(d['match_method']!='unmapped').mean()),'% mapped'); print(d['match_method'].value_counts().to_dict())"
-```
+Git-attributable AI only (undercounts silent Copilot); PR quality is
+autonomous-agents-only and small-N; churn measures activity not proven quality;
+jobs AI-usage is sparse (report direction, not precise rates); tech "usage" is
+0 by artifact (tagged from a structured skills field). Data is a fixed snapshot,
+so the pipeline is on-demand (`schedule=None`), not live-scheduled.
 
 ---
 
-## Tagger sanity check:
+## Command reference
 
-check_it.py — pulls IT/data occupations (ISCO 251/252) and shows how many have has_ai_skill=False. Purpose: confirm the tagger isn't missing AI on tech roles.
+All commands run from the project root unless noted.
 
-check_ai.py — lists the postings flagged has_ai_skill=True + which terms fired. Purpose: confirm the hits are real AI roles, not false positives.
-
-agg.py — the AI-skill % by exposure band × period. Purpose: the actual finding (the High>Mid>Low gradient), in stable buckets.
-
-check_map.py - It spot-checks whether the crosswalk assigned the right occupation. It pulls 20 random rows that matched via esco_fuzzy (the riskiest tier — fuzzy guesses, not exact) and shows each German title next to the English ISCO occupation it got mapped to.
-
+### Setup
 ```bash
-python3 check_it.py
-
-python3 check_ai.py
-
-python3 agg.py
-
-python3 check_map.py
+pip install -r requirements.txt        # install deps
+cp env.example .env                    # create env (GOLD_BACKEND=postgres, PG* creds)
+cat .env                               # verify contents
 ```
 
-It does all five checks — coverage, AI-skill rate, fuzzy spot-check, exposure-band breakdown, and top unmapped titles — for any silver file:
+### Docker stack (Postgres + Airflow)
 ```bash
-python3 check_silver.py data/silver/kaggle/dt=2026-08-10/de_jobs.csv normalized_title
-python3 check_silver.py data/silver/tech/dt=2026-08-10/de_tech_jobs.csv title_clean
+open -a Docker                         # macOS: start Docker Desktop, wait until ready
+docker compose up -d --build           # build + start all services (first build ~2 min)
+docker compose ps                      # all services "Up" (postgres, airflow-web, -scheduler)
+docker compose logs -f airflow-init    # watch first-time init (ends "User admin created")
+docker compose down                    # stop everything (keeps data volume)
+docker compose down -v                 # stop + wipe the pg volume (fresh start)
+docker compose restart airflow-scheduler   # reload after changing a DAG
 ```
 
-
-## Script to show all skills from the job_postings_raw.csv:
-
+### Create silver (host — heavy ML/parsing, run when data changes)
 ```bash
-cat > find_ai_terms.py << 'EOF'
-import pandas as pd, re
-from collections import Counter
-d = pd.read_csv('data/bronze/kaggle/job_postings_raw.csv')
-text = " ".join(d['skills_extracted'].fillna('').astype(str)).lower()
-# count all distinct skills (they're ; separated)
-skills = Counter(s.strip() for s in text.replace('\n',';').split(';') if s.strip())
-print("TOP 60 skills in the data:")
-for s, n in skills.most_common(60):
-    print(f"{n:>5}  {s}")
-EOF
-python3 find_ai_terms.py
+python -m src.ingestion.kaggle_jobs    # general jobs → silver
+python -m src.ingestion.tech_jobs      # tech jobs → silver
+# (+ github silver: gharchive_signals / gharchive_pr_signals / churn_signals)
 ```
 
-
-## Verifying the silver layer
-
-`check_silver.py` runs a 7-point quality report on any silver file. Run it after
-every ingestion to confirm the data is trustworthy before building gold.
-
-### Usage
+### Load silver into Postgres
 ```bash
-python3 check_silver.py <silver.csv> [title_column]
-
-# general dataset
-python3 check_silver.py data/silver/kaggle/dt=YYYY-MM-DD/de_jobs.csv normalized_title
-
-# tech dataset
-python3 check_silver.py data/silver/tech/dt=YYYY-MM-DD/de_tech_jobs.csv title_clean
+python -m src.db.load_silver_to_postgres          # jobs silver → silver.*
+python -m src.db.load_github_silver_to_postgres   # github silver → silver.*
 ```
 
-### What it checks
-| # | Check | What it tells you |
-|---|-------|-------------------|
-| 1 | Coverage | % of titles mapped to ISCO, and via which tier (alias/exact = reliable, fuzzy = risky, unmapped = none) |
-| 2 | AI-skill demand | the AI-skill rate and which terms fired (spot false positives) |
-| 3 | Fuzzy spot-check | sample of fuzzy-matched rows to eyeball for wrong occupations |
-| 4 | Exposure bands | AI-skill % by High/Mid/Low exposure — the core finding |
-| 5 | Top unmapped | highest-frequency titles missing a code (what rules to add next) |
-| 6 | Broken joins | rows mapped to an ISCO code absent from the ILO exposure file |
-| 7 | Null audit | missing values in analysis-critical columns |
+### Build + test gold with dbt
+```bash
+cd dbt
+dbt debug   --profiles-dir .           # check project + DB connection
+dbt run     --profiles-dir .           # build all 8 gold tables (both pillars)
+dbt test    --profiles-dir .           # run data tests
+dbt docs generate --profiles-dir .     # build lineage/docs
+dbt docs serve    --profiles-dir .     # view the DAG in a browser
+cd ..
+```
 
-### What "good" looks like
-- **Coverage** ≥ ~80%, mostly `alias`/`esco_exact` (not fuzzy).
-- **AI-skill terms** are genuine AI/ML (no incidental mentions).
-- **Fuzzy spot-check** rows map to sensible occupations (or the tier is empty).
-- **Broken joins** and **critical nulls** are 0.
-- **Unmapped** remainder is mostly non-occupations (Werkstudent, Minijob, FSJ).
+### Run the pipeline via Airflow
+```bash
+# UI: http://localhost:8080  (admin / admin) → enable + trigger "aiwork_pipeline"
+
+# CLI:
+docker exec aiwork_airflow_scheduler airflow dags list | grep aiwork
+docker exec aiwork_airflow_scheduler airflow dags trigger aiwork_pipeline
+docker exec aiwork_airflow_scheduler airflow dags list-runs -d aiwork_pipeline      # state: success
+docker exec aiwork_airflow_scheduler airflow tasks states-for-dag-run aiwork_pipeline <run_id>
+docker exec aiwork_airflow_scheduler airflow tasks test aiwork_pipeline dbt_run 2026-08-19   # test one task
+docker exec aiwork_airflow_scheduler which dbt                                      # confirm dbt in image
+```
+
+### Inspect the warehouse
+```bash
+# schemas + tables
+docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "\dn"          # schemas
+docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "\dt silver.*" # silver tables
+docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "\dt gold.*"   # gold tables (8)
+
+# spot-check key results
+docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "select * from gold.github_adoption_by_year;"
+docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "select * from gold.jobs_by_exposure_band_year limit 10;"
+docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "select * from gold.github_merge_rate;"
+
+# interactive shell
+docker exec -it aiwork_postgres psql -U aiwork -d aiwork   # then \dt gold.*  /  select ...  /  \q
+```
+
+### Run the dashboard
+```bash
+streamlit run app.py                   # http://localhost:8501 (reads Postgres via .env)
+
+# confirm it's reading Postgres, not CSVs:
+python -c "from dotenv import load_dotenv; load_dotenv(); import os; print(os.environ.get('GOLD_BACKEND'))"
+# → postgres
+```
+
+### Verify the whole thing (end-to-end checklist)
+```bash
+docker compose ps                                              # 1. services up
+docker exec aiwork_airflow_scheduler airflow dags trigger aiwork_pipeline   # 2. run DAG
+docker exec aiwork_airflow_scheduler airflow dags list-runs -d aiwork_pipeline   #    → success
+docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "\dt gold.*"    # 3. 8 gold tables
+docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "select * from gold.github_adoption_by_year;"  # 4. 20× jump
+streamlit run app.py                                          # 5. all charts render
+```
+
+### Data-quality audits (silver)
+```bash
+python check_silver.py                 # jobs silver invariants
+python check_gharchive_silver.py       # github silver invariants (dedup, num≤denom, enums)
+```
+
+### Git hygiene
+```bash
+git status                             # what's staged
+git rm -r --cached data/bronze data/silver   # untrack large/regenerable data (keep on disk)
+```

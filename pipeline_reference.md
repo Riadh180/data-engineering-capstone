@@ -9,7 +9,7 @@ The overall shape follows the **medallion architecture** — a data-engineering
 convention with three layers: **bronze** (raw data exactly as it arrived),
 **silver** (cleaned, standardised, enriched — one row per real-world thing,
 trustworthy), and **gold** (aggregated results ready for analysis or charts).
-Bronze → silver is built; gold is next.
+Bronze → silver is built in Python; silver → gold is built with dbt (SQL); both live in a Postgres warehouse, orchestrated by Airflow and served via Streamlit.
 
 ---
 
@@ -322,3 +322,88 @@ confident. So: unmapped = low score **or** matched-to-a-scoreless-code.
 categories. "EU taxonomy" here just means ESCO is the European Union's
 standardised catalogue of occupations and skills — the authoritative list, in
 multiple languages, that everything maps to.
+
+---
+
+## Stage 3 — Gold (aggregation, built with dbt/SQL)
+
+Gold turns trustworthy silver rows into the aggregated tables the charts read.
+**All gold is built by dbt as SQL models** (both pillars), reading from the
+`silver.*` tables in Postgres and writing `gold.*` tables in Postgres.
+
+**Why dbt/SQL here (and Python for silver):** gold is set-based aggregation —
+group, join, average, bucket. That's what SQL is for, and dbt adds tests,
+lineage, and docs on top. Silver, by contrast, is procedural enrichment (an
+embedding model, regex tagging, git-history parsing) that SQL can't express — so
+silver stays Python. The boundary follows the nature of the work, not habit.
+
+**Jobs gold** (`dbt/models/gold/`):
+- `jobs_by_exposure_band_year` — per dataset × exposure band × year:
+  `n_postings`, `ai_usage_rate`, `ai_building_rate`, `avg_exposure`.
+- `jobs_by_occupation` — occupation-level grain (for correlations).
+
+**Code gold**:
+- `github_adoption_by_year` / `_by_month` — AI-signal commit share
+  (numerator `gh_matches` deduped by sha, denominator `gh_totals`).
+- `github_merge_rate` — merge rate by author_class × size bucket (PRs deduped).
+- `github_changes_requested` — review pushback rate by author class.
+- `github_churn_by_bucket` — 14-day follow-up churn by class × size bucket.
+- `github_ai_share_by_repo` — AI touch share per repo.
+
+Each aggregation was verified to match the original Python implementation exactly
+(e.g. adoption 0.0068 → 0.0076 → 0.1562).
+
+## Stage 4 — Warehouse (Postgres, two schemas)
+
+- **`silver.*`** — the cleaned tables the loaders push in
+  (`jobs_kaggle`, `jobs_tech`, `gh_matches`, `gh_totals`, `gh_pr_outcomes`,
+  `gh_pr_reviews`, `gh_churn_events`). dbt reads *from* here.
+- **`gold.*`** — the 8 aggregated tables dbt *writes*. The dashboard reads here.
+
+Loaders: `src/db/load_silver_to_postgres.py` (jobs) and
+`src/db/load_github_silver_to_postgres.py` (code) — CSV silver → `silver.*`.
+Gold is **not** loaded from CSV; dbt builds it directly in Postgres.
+
+## Stage 5 — Orchestration (Airflow)
+
+DAG `aiwork_pipeline` (Docker, LocalExecutor):
+
+```
+load_jobs_silver ─┐
+                  ├─► dbt_run ─► dbt_test
+load_gh_silver   ─┘
+```
+
+Both silvers load in parallel, dbt builds all gold, dbt tests run. dbt is baked
+into a custom Airflow image (`airflow/Dockerfile`) so the scheduler always has
+it. `schedule=None` — the data is a fixed snapshot, so runs are on-demand;
+Airflow's value here is reproducible orchestration, not live scheduling.
+
+**Ingestion is not in the DAG** — the silver-creation scripts need a ~1 GB
+embedding model / repo clones and run on the host. Standard practice: keep
+heavy ML extraction out of the orchestrator container.
+
+## Stage 6 — Serving (Streamlit)
+
+`app.py` — an interactive Plotly dashboard, five tabs (Adoption, Jobs,
+Acceptance, Durability, Synthesis), each chart with a What / Why / Honest-
+limitation note. Data source is a single boundary: `GOLD_BACKEND=postgres`
+reads `gold.*` from the warehouse; otherwise it reads gold CSVs. One env var
+switches backends, so the dashboard demos with or without the DB and the future
+cloud lift changes only the connection.
+
+## The stack at a glance
+
+| Layer | Tool |
+|---|---|
+| Storage / warehouse | Postgres (`silver` + `gold`) |
+| Transformation | dbt (SQL models, both pillars) |
+| Governance | dbt tests |
+| Orchestration | Airflow (Docker) |
+| Serving | Streamlit + Plotly |
+| Containerization | Docker Compose |
+
+## Next (cloud, parked)
+MinIO (local S3) for bronze/silver/gold → real AWS S3 → Postgres to AWS RDS.
+Each is a config/endpoint change, not a rewrite — the local-first design makes
+the lift incremental.
