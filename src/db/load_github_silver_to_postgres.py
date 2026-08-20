@@ -9,9 +9,12 @@ Load GitHub silver into Postgres schema `silver` (dbt sources for the GitHub gol
   silver.gh_churn_events  <- data/silver/churn/churn_events.csv
 
 Idempotent (replace). Env-driven connection (.env).
+Bulk-loads via Postgres COPY, so large tables land in seconds even against a
+remote cloud DB (Neon) instead of crawling row-by-row.
+
 Run:  python -m src.db.load_github_silver_to_postgres
 """
-import glob, os
+import glob, io, os
 try:
     from dotenv import load_dotenv; load_dotenv()
 except ImportError:
@@ -24,14 +27,42 @@ def engine_from_env():
     u=os.environ.get("PGUSER","aiwork"); p=os.environ.get("PGPASSWORD","aiwork")
     h=os.environ.get("PGHOST","localhost"); pt=os.environ.get("PGPORT","5432")
     db=os.environ.get("PGDATABASE","aiwork")
-    return create_engine(f"postgresql+psycopg2://{u}:{p}@{h}:{pt}/{db}")
+    sslmode=os.environ.get("PGSSLMODE","prefer")   # Neon: set PGSSLMODE=require in .env
+    return create_engine(
+        f"postgresql+psycopg2://{u}:{p}@{h}:{pt}/{db}",
+        pool_pre_ping=True,                        # recover dropped idle cloud connections
+        connect_args={
+            "sslmode": sslmode,
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 5,
+        },
+    )
+
+
+def _copy_into(eng, table, df):
+    """Create silver.<table> with df's schema, then bulk-load rows via COPY."""
+    # 1) empty table with the right columns/types (pandas infers the DDL)
+    df.head(0).to_sql(table, eng, schema="silver", if_exists="replace", index=False)
+    # 2) stream the rows in with COPY -- the fast path (~10-100x vs row inserts)
+    buf = io.StringIO()
+    df.to_csv(buf, index=False, header=False)
+    buf.seek(0)
+    raw = eng.raw_connection()
+    try:
+        cur = raw.cursor()
+        cur.copy_expert(f'COPY silver."{table}" FROM STDIN WITH (FORMAT csv)', buf)
+        raw.commit()
+    finally:
+        raw.close()
 
 
 def load_one(eng, table, path):
     if not os.path.exists(path):
         print(f"    skip {table} (no {path})"); return
     df = pd.read_csv(path)
-    df.to_sql(table, eng, schema="silver", if_exists="replace", index=False)
+    _copy_into(eng, table, df)
     print(f"    loaded silver.{table}: {len(df):,} rows  <- {path}")
 
 
@@ -40,7 +71,7 @@ def load_pooled(eng, table, glob_pat):
     if not paths:
         print(f"    skip {table} (no files at {glob_pat})"); return
     df = pd.concat([pd.read_csv(p) for p in paths], ignore_index=True)
-    df.to_sql(table, eng, schema="silver", if_exists="replace", index=False)
+    _copy_into(eng, table, df)
     print(f"    loaded silver.{table}: {len(df):,} rows  <- {len(paths)} day-folders")
 
 

@@ -9,4 +9,6 @@ aiwork:
       password: "{{ env_var('PGPASSWORD', 'aiwork') }}"
       dbname: "{{ env_var('PGDATABASE', 'aiwork') }}"
       schema: gold
+      sslmode: "{{ env_var('PGSSLMODE', 'prefer') }}"
+      keepalives_idle: 30
       threads: 4

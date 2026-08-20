@@ -48,7 +48,9 @@ def load_gold(gold_dir=GOLD):
         u=os.environ.get("PGUSER","aiwork"); p=os.environ.get("PGPASSWORD","aiwork")
         h=os.environ.get("PGHOST","localhost"); pt=os.environ.get("PGPORT","5432")
         db=os.environ.get("PGDATABASE","aiwork")
-        eng=create_engine(f"postgresql+psycopg2://{u}:{p}@{h}:{pt}/{db}")
+        ssl=os.environ.get("PGSSLMODE","")
+        suffix=f"?sslmode={ssl}" if ssl else ""
+        eng=create_engine(f"postgresql+psycopg2://{u}:{p}@{h}:{pt}/{db}{suffix}")
         out={}
         for key, tbl in _GOLD_MAP.items():
             try:
