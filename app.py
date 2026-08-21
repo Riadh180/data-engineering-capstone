@@ -44,21 +44,17 @@ _GOLD_MAP = {"adopt_year": "github_adoption_by_year",
 def load_gold(gold_dir=GOLD):
     if GOLD_BACKEND == "postgres":
         from sqlalchemy import create_engine
-        import pandas as _pd
         u=os.environ.get("PGUSER","aiwork"); p=os.environ.get("PGPASSWORD","aiwork")
         h=os.environ.get("PGHOST","localhost"); pt=os.environ.get("PGPORT","5432")
         db=os.environ.get("PGDATABASE","aiwork")
         ssl=os.environ.get("PGSSLMODE","")
         suffix=f"?sslmode={ssl}" if ssl else ""
-        eng=create_engine(f"postgresql+psycopg2://{u}:{p}@{h}:{pt}/{db}{suffix}")
-        out={}
-        for key, tbl in _GOLD_MAP.items():
-            try:
-                out[key]=_pd.read_sql(f"select * from gold.{tbl}", eng)
-            except Exception:
-                out[key]=_pd.DataFrame()
-        return out
-    # CSV backend (default)
+        eng=create_engine(f"postgresql+psycopg2://{u}:{p}@{h}:{pt}/{db}{suffix}",
+                          pool_pre_ping=True)
+        # No blanket except: surface the real error in the logs instead of
+        # returning empty frames that later explode as a cryptic KeyError.
+        return {key: pd.read_sql(f"select * from gold.{tbl}", eng)
+                for key, tbl in _GOLD_MAP.items()}
     def rd(name):
         p = os.path.join(gold_dir, name + ".csv")
         return pd.read_csv(p, dtype={"isco08_4digit": str}) if os.path.exists(p) else pd.DataFrame()
