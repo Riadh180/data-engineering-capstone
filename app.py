@@ -785,6 +785,22 @@ def infobox(text, col=None):
             f"border:1px solid {GRID};border-radius:8px;padding:8px 11px;margin:6px 0 2px'>{text}</div>")
     (col.markdown if col is not None else st.markdown)(html, unsafe_allow_html=True)
 
+def small_n_note(df, klass_col, n_col, klass="ai_agent", threshold=1000, unit="PRs"):
+    """Visible small-sample warning when a class's counts are thin vs the rest."""
+    if df is None or df.empty or klass_col not in df or n_col not in df:
+        return
+    s = df[df[klass_col] == klass]
+    other = df[df[klass_col] != klass]
+    if s.empty:
+        return
+    hi = int(s[n_col].max())
+    if hi < threshold:
+        lo = int(s[n_col].min())
+        rng = f"{lo:,}" if lo == hi else f"{lo:,}–{hi:,}"
+        base = f" vs {int(other[n_col].max()):,} for the baseline" if not other.empty else ""
+        st.warning(f"⚠ Small sample — autonomous-agent {unit}: **{rng}**{base}. "
+                   f"Read the agent bars as **directional**, not precise rates.")
+
 def main():
     st.set_page_config(page_title="AI \u00d7 Work", layout="wide", initial_sidebar_state="collapsed")
     st.markdown(f"""<style>.stApp{{background:{BG};}}.block-container{{padding-top:2rem;max-width:1200px;}}h1,h2,h3,h4{{color:{TXT};}}[data-testid=\"stMarkdownContainer\"] p,[data-testid=\"stMarkdownContainer\"] li,[data-testid=\"stMarkdownContainer\"] td,[data-testid=\"stMarkdownContainer\"] th{{color:{TXT};}}</style>""", unsafe_allow_html=True)
@@ -931,12 +947,14 @@ def main():
 
     with t3:
         plot(chart_merge(d), "chart_9")
+        small_n_note(d["merge"], "author_class", "n_prs", "ai_agent", 1000, "PRs")
         explain("Merge rate for autonomous-agent PRs vs everyone else, within each PR-size band.",
                 "The gap persists at every size \u2014 not just 'agent PRs are bigger'.",
                 "Merge rate is *acceptance*, not code quality; agent PRs draw no more change-requests, pointing to process not worse code. Agent N per bucket is small.")
         if len(d["cr"]):
             st.caption("Changes-requested rate (second acceptance signal):")
             st.dataframe(d["cr"], hide_index=True, use_container_width=True)
+            small_n_note(d["cr"], "pr_author_class", "n_reviews", "ai_agent", 1000, "reviews")
 
     with t4:
         plot(chart_churn(d), "chart_10")
