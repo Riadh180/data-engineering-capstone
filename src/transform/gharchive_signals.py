@@ -18,17 +18,25 @@ Signals computable from GH Archive events:
 Also writes totals.csv (month, n_commits, n_pr_events) — the DENOMINATOR needed
 to turn match counts into an ai_share rate.
 
-Not in GH Archive events (needs a follow-up GitHub API / diff call):
-  dependency    - adding openai/langchain/... to a deps file (no file list here)
+Input/output work on both local paths and s3:// (via fsspec/s3fs); paths default
+under LAKE_ROOT. Not in GH Archive events (needs a follow-up GitHub API / diff
+call): dependency additions (openai/langchain/...).
 """
 import argparse
 import csv
-import gzip
 import io
 import json
 import os
 import re
 from collections import Counter
+
+try:
+    from dotenv import load_dotenv; load_dotenv()   # so LAKE_ROOT is set from .env
+except ImportError:
+    pass
+
+import fsspec
+from src.common.config import lake_path, lake_makedirs, lake_glob
 
 # Known AI coding-agent identity STEMS (matched after normalization).
 AI_AGENT_STEMS = {
@@ -61,9 +69,25 @@ def is_ai_agent(value: str) -> bool:
 
 
 def open_any(path):
-    if path.endswith(".gz"):
-        return io.TextIOWrapper(gzip.open(path, "rb"), encoding="utf-8", errors="replace")
-    return open(path, "r", encoding="utf-8", errors="replace")
+    """Open a local or s3:// file, transparently gunzipping .gz (fsspec)."""
+    return fsspec.open(path, "rt", compression="infer",
+                       encoding="utf-8", errors="replace").open()
+
+
+def expand_inputs(paths):
+    """Expand any wildcard args via lake_glob (needed for s3:// globs, which the
+    shell can't expand); pass through literal paths unchanged."""
+    out = []
+    for p in paths:
+        out.extend(lake_glob(p) if any(ch in p for ch in "*?[") else [p])
+    return out
+
+
+def _write_text(path, text):
+    """Write text to a local or s3:// path (fsspec), creating local dirs first."""
+    lake_makedirs(os.path.dirname(path) or ".")
+    with fsspec.open(path, "w", encoding="utf-8") as f:
+        f.write(text)
 
 
 def commit_signals(message: str):
@@ -87,19 +111,21 @@ def commit_signals(message: str):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("paths", nargs="+", help="GH Archive file(s) (.json or .json.gz)")
-    ap.add_argument("--csv", default="data/silver/gharchive/matches.csv")
-    ap.add_argument("--totals", default="data/silver/gharchive/totals.csv")
+    ap.add_argument("paths", nargs="+", help="GH Archive file(s) (.json/.json.gz, local or s3://)")
+    ap.add_argument("--csv", default=lake_path("silver/github/adoption/matches.csv"))
+    ap.add_argument("--totals", default=lake_path("silver/github/adoption/totals.csv"))
     args = ap.parse_args()
 
+    paths = expand_inputs(args.paths)
+
     stats = Counter()
-    month_commits = Counter()   # month -> commits scanned  (denominator)
-    month_prs = Counter()       # month -> PR events scanned (denominator)
+    month_commits = Counter()
+    month_prs = Counter()
     examples = {"coauthor_ai": [], "selfadmit_phrase": [], "ai_agent": [], "ai_agent_pr": []}
     csv_rows = []
-    seen_sha = set()          # parse-time dedup of replayed commits
+    seen_sha = set()
 
-    for path in args.paths:
+    for path in paths:
         with open_any(path) as fh:
             for line in fh:
                 line = line.strip()
@@ -125,11 +151,11 @@ def main():
                     for c in (ev.get("payload") or {}).get("commits", []) or []:
                         sha = c.get("sha", "")
                         if sha and sha in seen_sha:
-                            continue                       # replayed commit, already counted
+                            continue
                         if sha:
                             seen_sha.add(sha)
                         stats["commits_total"] += 1
-                        month_commits[month] += 1          # <-- denominator (distinct commits)
+                        month_commits[month] += 1
                         msg = c.get("message", "")
                         author = c.get("author") or {}
                         author_name = author.get("name", "")
@@ -176,7 +202,7 @@ def main():
 
                 elif etype == "PullRequestEvent":
                     stats["pr_events"] += 1
-                    month_prs[month] += 1                  # <-- denominator
+                    month_prs[month] += 1
                     pr = (ev.get("payload") or {}).get("pull_request") or {}
                     pr_author = (pr.get("user") or {}).get("login", "")
                     if is_ai_agent(pr_author) or pr_author.endswith("[bot]"):
@@ -188,7 +214,7 @@ def main():
 
     # ---- report ----
     print("=" * 64)
-    print(f"GH Archive AI-authorship signals  —  {len(args.paths)} file(s)")
+    print(f"GH Archive AI-authorship signals  —  {len(paths)} file(s)")
     print("=" * 64)
     print(f"events total ............ {stats['events_total']:,}")
     print(f"  push events ........... {stats['push_events']:,}")
@@ -222,21 +248,21 @@ def main():
 
     # ---- write matches ----
     if csv_rows:
-        os.makedirs(os.path.dirname(args.csv) or ".", exist_ok=True)
-        with open(args.csv, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=list(csv_rows[0].keys()))
-            w.writeheader()
-            w.writerows(csv_rows)
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=list(csv_rows[0].keys()))
+        w.writeheader()
+        w.writerows(csv_rows)
+        _write_text(args.csv, buf.getvalue())
         print(f"\nwrote {len(csv_rows)} matched commits -> {args.csv}")
 
     # ---- write totals (denominator) ----
-    os.makedirs(os.path.dirname(args.totals) or ".", exist_ok=True)
     months = sorted(set(month_commits) | set(month_prs))
-    with open(args.totals, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["month", "n_commits", "n_pr_events"])
-        for m in months:
-            w.writerow([m, month_commits[m], month_prs[m]])
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["month", "n_commits", "n_pr_events"])
+    for m in months:
+        w.writerow([m, month_commits[m], month_prs[m]])
+    _write_text(args.totals, buf.getvalue())
     print(f"wrote {len(months)} month-totals -> {args.totals}")
 
 

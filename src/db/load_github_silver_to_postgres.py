@@ -2,25 +2,26 @@
 """
 Load GitHub silver into Postgres schema `silver` (dbt sources for the GitHub gold).
 
-  silver.gh_matches       <- data/silver/gharchive/matches.csv
-  silver.gh_totals        <- data/silver/gharchive/totals.csv
-  silver.gh_pr_outcomes   <- data/silver/gharchive_day_*/pr_outcomes.csv  (pooled)
-  silver.gh_pr_reviews    <- data/silver/gharchive_day_*/pr_reviews.csv   (pooled)
-  silver.gh_churn_events  <- data/silver/churn/churn_events.csv
+  silver.gh_matches       <- <LAKE>/silver/github/adoption/matches.csv
+  silver.gh_totals        <- <LAKE>/silver/github/adoption/totals.csv
+  silver.gh_pr_outcomes   <- <LAKE>/silver/github/pr_quality/dt=*/pr_outcomes.csv  (pooled)
+  silver.gh_pr_reviews    <- <LAKE>/silver/github/pr_quality/dt=*/pr_reviews.csv   (pooled)
+  silver.gh_churn_events  <- <LAKE>/silver/github/churn/churn_events.csv
 
-Idempotent (replace). Env-driven connection (.env).
-Bulk-loads via Postgres COPY, so large tables land in seconds even against a
-remote cloud DB (Neon) instead of crawling row-by-row.
+Silver is read from LAKE_ROOT (local data/ or s3://bucket). Idempotent (replace).
+Bulk-loads via Postgres COPY so large tables land in seconds against Neon.
 
 Run:  python -m src.db.load_github_silver_to_postgres
 """
-import glob, io, os
+import io, os
 try:
     from dotenv import load_dotenv; load_dotenv()
 except ImportError:
     pass
 import pandas as pd
 from sqlalchemy import create_engine, text
+
+from src.common.config import lake_path, lake_glob, lake_exists   # AFTER load_dotenv
 
 
 def engine_from_env():
@@ -30,7 +31,7 @@ def engine_from_env():
     sslmode=os.environ.get("PGSSLMODE","prefer")   # Neon: set PGSSLMODE=require in .env
     return create_engine(
         f"postgresql+psycopg2://{u}:{p}@{h}:{pt}/{db}",
-        pool_pre_ping=True,                        # recover dropped idle cloud connections
+        pool_pre_ping=True,
         connect_args={
             "sslmode": sslmode,
             "keepalives": 1,
@@ -43,9 +44,7 @@ def engine_from_env():
 
 def _copy_into(eng, table, df):
     """Create silver.<table> with df's schema, then bulk-load rows via COPY."""
-    # 1) empty table with the right columns/types (pandas infers the DDL)
     df.head(0).to_sql(table, eng, schema="silver", if_exists="replace", index=False)
-    # 2) stream the rows in with COPY -- the fast path (~10-100x vs row inserts)
     buf = io.StringIO()
     df.to_csv(buf, index=False, header=False)
     buf.seek(0)
@@ -59,7 +58,7 @@ def _copy_into(eng, table, df):
 
 
 def load_one(eng, table, path):
-    if not os.path.exists(path):
+    if not lake_exists(path):
         print(f"    skip {table} (no {path})"); return
     df = pd.read_csv(path)
     _copy_into(eng, table, df)
@@ -67,7 +66,7 @@ def load_one(eng, table, path):
 
 
 def load_pooled(eng, table, glob_pat):
-    paths = sorted(glob.glob(glob_pat))
+    paths = lake_glob(glob_pat)
     if not paths:
         print(f"    skip {table} (no files at {glob_pat})"); return
     df = pd.concat([pd.read_csv(p) for p in paths], ignore_index=True)
@@ -79,11 +78,11 @@ def main():
     eng = engine_from_env()
     with eng.begin() as c:
         c.execute(text("CREATE SCHEMA IF NOT EXISTS silver"))
-    load_one(eng, "gh_matches", "data/silver/gharchive/matches.csv")
-    load_one(eng, "gh_totals",  "data/silver/gharchive/totals.csv")
-    load_pooled(eng, "gh_pr_outcomes", "data/silver/gharchive_day_*/pr_outcomes.csv")
-    load_pooled(eng, "gh_pr_reviews",  "data/silver/gharchive_day_*/pr_reviews.csv")
-    load_one(eng, "gh_churn_events", "data/silver/churn/churn_events.csv")
+    load_one(eng, "gh_matches", lake_path("silver/github/adoption/matches.csv"))
+    load_one(eng, "gh_totals",  lake_path("silver/github/adoption/totals.csv"))
+    load_pooled(eng, "gh_pr_outcomes", lake_path("silver/github/pr_quality/dt=*/pr_outcomes.csv"))
+    load_pooled(eng, "gh_pr_reviews",  lake_path("silver/github/pr_quality/dt=*/pr_reviews.csv"))
+    load_one(eng, "gh_churn_events", lake_path("silver/github/churn/churn_events.csv"))
     print("\nGitHub silver -> Postgres done")
 
 

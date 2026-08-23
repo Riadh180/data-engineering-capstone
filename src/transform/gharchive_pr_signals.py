@@ -8,9 +8,20 @@ Emits two slim silver tables, split by author_class (ai_agent vs baseline):
 
 Agent identity comes from gharchive_signals.is_ai_agent (single source of truth).
 Only AUTONOMOUS AI-AGENT PRs are labelled ai_agent; human-with-Copilot PRs are not.
+
+Input/output work on both local paths and s3:// (via fsspec/s3fs). Output goes to
+<LAKE>/silver/github/pr_quality[/dt=<dt>]; pass --dt to write a dated partition.
 """
-import argparse, csv, gzip, io, json, os
+import argparse, csv, io, json, os
 from datetime import datetime
+
+try:
+    from dotenv import load_dotenv; load_dotenv()
+except ImportError:
+    pass
+
+import fsspec
+from src.common.config import lake_path, lake_makedirs, lake_glob
 from src.transform.gharchive_signals import is_ai_agent   # single source of truth
 
 
@@ -18,9 +29,14 @@ def author_class(login: str) -> str:
     return "ai_agent" if is_ai_agent(login) else "baseline"
 
 def open_any(path):
-    if path.endswith(".gz"):
-        return io.TextIOWrapper(gzip.open(path, "rb"), encoding="utf-8", errors="replace")
-    return open(path, "r", encoding="utf-8", errors="replace")
+    return fsspec.open(path, "rt", compression="infer",
+                       encoding="utf-8", errors="replace").open()
+
+def expand_inputs(paths):
+    out = []
+    for p in paths:
+        out.extend(lake_glob(p) if any(ch in p for ch in "*?[") else [p])
+    return out
 
 def month_of(ts: str) -> str:
     return (ts or "")[:7]
@@ -34,7 +50,6 @@ def hours_open(created, closed):
         return ""
 
 def parse_file(path, outcomes, reviews):
-    # outcomes is a dict keyed by (repo, pr_number) -> last closed state (dedup)
     for line in open_any(path):
         line = line.strip()
         if not line:
@@ -71,28 +86,35 @@ def parse_file(path, outcomes, reviews):
             })
 
 def write_csv(rows, path, fields):
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
-        w.writeheader(); w.writerows(rows)
+    lake_makedirs(os.path.dirname(path) or ".")
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=fields)
+    w.writeheader(); w.writerows(rows)
+    with fsspec.open(path, "w", encoding="utf-8") as f:
+        f.write(buf.getvalue())
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("files", nargs="+")
-    ap.add_argument("--outdir", default="data/silver/gharchive")
+    ap.add_argument("files", nargs="+", help="GH Archive file(s), local or s3://")
+    ap.add_argument("--outdir", default=lake_path("silver/github/pr_quality"))
+    ap.add_argument("--dt", default=None, help="partition date -> writes under dt=<dt>/")
     a = ap.parse_args()
+
+    outdir = f"{a.outdir}/dt={a.dt}" if a.dt else a.outdir
+    files = expand_inputs(a.files)
+
     outcomes, reviews = {}, []
-    for path in a.files:
+    for path in files:
         parse_file(path, outcomes, reviews)
-    write_csv(list(outcomes.values()), os.path.join(a.outdir, "pr_outcomes.csv"),
+    write_csv(list(outcomes.values()), f"{outdir}/pr_outcomes.csv",
               ["month", "repo", "pr_number", "author_login", "author_class",
                "merged", "size_lines", "changed_files", "hours_open"])
-    write_csv(reviews, os.path.join(a.outdir, "pr_reviews.csv"),
+    write_csv(reviews, f"{outdir}/pr_reviews.csv",
               ["month", "repo", "pr_number", "pr_author_class", "state"])
     rows = list(outcomes.values())
     na = sum(1 for r in rows if r["author_class"] == "ai_agent")
     print(f"closed PRs: {len(rows)} ({na} ai_agent) | reviews: {len(reviews)}")
-    print(f"wrote -> {a.outdir}/pr_outcomes.csv , pr_reviews.csv")
+    print(f"wrote -> {outdir}/pr_outcomes.csv , pr_reviews.csv")
 
 if __name__ == "__main__":
     main()

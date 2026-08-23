@@ -2,15 +2,15 @@
 """
 Load the latest silver partitions into Postgres schema `silver` (dbt sources).
 
-  silver.jobs_kaggle   <- data/silver/kaggle/dt=*/de_jobs.csv       (general)
-  silver.jobs_tech     <- data/silver/tech/dt=*/de_tech_jobs.csv    (tech)
+  silver.jobs_kaggle   <- <LAKE>/silver/kaggle/dt=*/de_jobs.csv       (general)
+  silver.jobs_tech     <- <LAKE>/silver/tech/dt=*/de_tech_jobs.csv    (tech)
 
-Idempotent (replace). Env-driven connection (reads .env).
+Silver is read from LAKE_ROOT (local data/ or s3://bucket). Idempotent (replace).
 Bulk-loads via Postgres COPY (fast against remote/Neon).
 
 Run:  python -m src.db.load_silver_to_postgres
 """
-import glob, io, os
+import io, os
 try:
     from dotenv import load_dotenv; load_dotenv()
 except ImportError:
@@ -18,9 +18,11 @@ except ImportError:
 import pandas as pd
 from sqlalchemy import create_engine, text
 
+from src.common.config import lake_path, lake_glob   # imported AFTER load_dotenv
+
 SILVER = {
-    "jobs_kaggle": "data/silver/kaggle",
-    "jobs_tech": "data/silver/tech",
+    "jobs_kaggle": lake_path("silver/kaggle"),
+    "jobs_tech": lake_path("silver/tech"),
 }
 
 
@@ -43,10 +45,14 @@ def engine_from_env():
 
 
 def latest(base):
-    parts = sorted(glob.glob(os.path.join(base, "dt=*")))
-    if not parts: return None
-    hits = glob.glob(os.path.join(parts[-1], "*.csv"))
-    return hits[0] if hits else None
+    """Newest dt= partition's first CSV, from local or S3. Globs real files so
+    it doesn't depend on S3 pseudo-directory listing."""
+    hits = lake_glob(f"{base}/dt=*/*.csv")
+    if not hits:
+        return None
+    latest_dt = max(h.split("/dt=")[1].split("/")[0] for h in hits)
+    inpart = sorted(h for h in hits if f"/dt={latest_dt}/" in h)
+    return inpart[0] if inpart else None
 
 
 def _copy_into(eng, table, df):
@@ -72,7 +78,7 @@ def main():
         p = latest(base)
         if not p:
             print(f"    skip {table} (no silver in {base})"); continue
-        df = pd.read_csv(p, dtype={"isco08_4digit": str})
+        df = pd.read_csv(p, dtype={"isco08_4digit": str})   # s3:// ok via s3fs
         _copy_into(eng, table, df)
         print(f"    loaded silver.{table}: {len(df):,} rows  <- {p}")
     print("\nsilver -> Postgres done")
