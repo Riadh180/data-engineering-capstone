@@ -1,10 +1,11 @@
 # AI × Work — Data Engineering Capstone
 
 How is AI reshaping **code** and the **German job market**? This project builds a
-full **bronze → silver → gold** data pipeline over two pillars and serves the
-findings through an interactive dashboard.
+full **bronze → silver → gold** data pipeline over two pillars, **lifted to the
+cloud** and served through an interactive public dashboard.
 
-*neuefische / SPICED Data-Engineering bootcamp — Ginger-Graphs cohort.*
+**🔗 Live dashboard:** `https://<your-app>.streamlit.app`
+*neuefische / SPICED Data-Engineering bootcamp.*
 
 ---
 
@@ -12,7 +13,7 @@ findings through an interactive dashboard.
 
 **Jobs pillar** — how AI is affecting existing jobs:
 - Do AI-*exposed* occupations rise or decline in demand over time?
-- Do jobs increasingly want humans who can **use** AI? (vs. **build** it)
+- Do jobs increasingly want humans who can **use** AI (vs. **build** it)?
 - Are AI-*building* roles a distinct, growing population?
 
 **Code pillar** — how AI is entering software:
@@ -22,198 +23,183 @@ findings through an interactive dashboard.
 
 ## Headline findings (all with honest caveats — see the dashboard)
 
-- **Code adoption**: attributable-AI commit share ~20× 2024→2025 (agents went
-  mainstream in 2025). Git-attributable only — undercounts silent Copilot.
-- **Jobs — using AI**: ~0.6% of general German ads ask for AI-usage skills,
-  emerging in 2026, concentrated in AI-exposed roles. Small but real.
-- **Jobs — building AI**: ~43% of *tech* roles; ~0% general. A clear divide.
-- **PR acceptance**: agent PRs merge ~10 pts less at equal size — but draw no
-  more change-requests → process/trust, not worse code.
+- **Code adoption**: attributable-AI commit share **0.68 % → 0.76 % → 15.62 %**
+  (2023→24→25) — ~20× jump as agents went mainstream in 2025. Git-attributable
+  only; undercounts silent Copilot, so it's a **floor**.
+- **Jobs — using AI**: AI-usage demand emerges in 2026, concentrated in
+  AI-exposed roles. Small but real.
+- **Jobs — building AI**: a tech phenomenon (~40–57 % of tech roles); ~0 % in the
+  general market. A clear divide.
+- **PR acceptance**: agent PRs merge less at equal size — but draw no more
+  change-requests → process/trust, not worse code.
 - **Code durability**: AI-touched code reworked *no more* than human at equal
   size. Contradicts the "AI is sloppier" prior.
 
 ---
 
-## Architecture (medallion + modern stack)
+## Architecture — medallion on the cloud
 
 ```
-          BRONZE (raw)         SILVER (clean, Python)      GOLD (aggregated, dbt/SQL)
- jobs:  Kaggle CSVs      →  ESCO crosswalk + AI tagger  →  jobs_by_exposure_band_year
- code:  GH Archive, repos →  signal parse + PyDriller    →  github_adoption / merge / churn ...
-                                     │                              │
-                                     ▼                              ▼
-                              Postgres  silver.*   ──dbt run──►  Postgres  gold.*
-                                     │                              │
-                              Airflow orchestrates          Streamlit dashboard
-                              (silver load → dbt → test)     (reads gold from Postgres)
+        BRONZE (raw)            SILVER (clean, Python)          GOLD (aggregated, dbt/SQL)
+ jobs:  job postings + Adzuna →  ESCO crosswalk + AI-tagger  →  jobs_by_exposure_band_year …
+ code:  GH Archive + git repos →  signal parse + PyDriller    →  github_adoption / merge / churn …
+
+        ── all files live in the R2 lake ──        ── gold built by dbt in Neon ──
+        Cloudflare R2 (bronze + silver)   ─loaders→   Neon Postgres (silver.* → gold.*)
+                     ▲                                          │
+        Airflow: @daily Adzuna pull                     Streamlit Community Cloud
+        + on-demand load → dbt → test                   (public dashboard, reads gold)
 ```
 
 | Layer | Tool | Why |
 |---|---|---|
-| Storage / warehouse | **Postgres** (Docker) | `silver` + `gold` schemas |
-| Transformation | **dbt** (SQL models) | both pillars' gold as tested SQL |
-| Governance | **dbt tests** | not_null / accepted_values, etc. |
-| Orchestration | **Airflow** (Docker) | load silver → dbt run → dbt test |
-| Serving | **Streamlit + Plotly** | interactive charts, reads Postgres |
-| Containerization | **Docker Compose** | Postgres + Airflow in one stack |
+| Data lake | **Cloudflare R2** (S3-compatible) | bronze + silver files; free tier, zero egress |
+| Warehouse | **Neon** (managed Postgres) | `silver` + `gold` schemas; serverless, autosuspend |
+| Silver transform | **Python** | ESCO embedding crosswalk, AI-skill tagger, ISCO→ILO join, GH-Archive parsing, PyDriller |
+| Gold transform | **dbt** (SQL models) | aggregate silver → 8 gold tables, + tests |
+| Orchestration / schedule | **Airflow** (Docker) | daily Adzuna ingestion + on-demand rebuild |
+| Serving | **Streamlit Community Cloud** + Plotly | public interactive dashboard |
+| Portability | `LAKE_ROOT` + S3 endpoint | point the lake at R2 / S3 / MinIO — no code change |
 
 **Design split (important):** *silver creation is Python, gold is SQL/dbt.*
-Silver is procedural (ML embeddings for the ESCO crosswalk, regex AI-tagging,
-GH Archive parsing, git history) — SQL can't express it. Gold is set-based
-aggregation — dbt's home turf. Heavy silver steps run **on the host**; Airflow
-orchestrates the light warehouse flow.
+Silver is procedural (ML embeddings, regex tagging, GH-Archive parsing, git
+history) — SQL can't express it. Gold is set-based aggregation — dbt's home turf.
+Heavy silver steps run **on the host**; Airflow orchestrates the light warehouse
+flow and the daily live ingestion.
+
+**Cost:** R2 (10 GB free, zero egress) + Neon (free) + Streamlit Community Cloud =
+**~$0/month at this scale.**
 
 ---
 
-## Quickstart
+## Live scheduled ingestion
+
+Two Airflow DAGs:
+
+- **`aiwork_adzuna_daily`** (`@daily`) — pulls fresh German job postings across
+  several categories from the **Adzuna API** and lands them in the R2 lake
+  (`bronze/adzuna/dt=<date>/` + enriched `silver/adzuna/dt=<date>/`). The
+  pipeline's live data-collection engine; the lake accumulates a new dated
+  partition every day.
+- **`aiwork_pipeline`** (on-demand) — loads both pillars' silver from R2 into
+  Neon, then `dbt run` + `dbt test` rebuilds and validates gold.
+
+> Airflow runs locally in Docker, so scheduled runs fire while the machine is up;
+> in production it would deploy to managed Airflow (MWAA / Composer) — the DAGs
+> are unchanged.
+
+---
+
+## Dashboard highlights
+
+Tabs: **Adoption · Jobs · Acceptance · Durability · Synthesis · Architecture.**
+- **Jobs** opens with an **ILO-style AI-exposure snapshot** — every occupation
+  posted in a chosen year, plotted by mean exposure score × task variability,
+  coloured by exposure gradient, sized by number of postings (year slider).
+- **Architecture** renders the cloud pipeline diagram, the stack, per-pillar data
+  lineage, and a **live Adzuna panel** reading the latest R2 partition.
+- Every chart carries a *What / Why / Honest-limitation* note.
+
+---
+
+## Quickstart (local dev against the cloud)
 
 ```bash
 # 0. deps + env
 pip install -r requirements.txt
-cp env.example .env            # dev defaults; sets GOLD_BACKEND=postgres
+cp env.example .env      # then fill in: Neon (PG*), R2 (AWS_*/endpoint), Adzuna keys, LAKE_ROOT
 
-# 1. warehouse + orchestrator (needs Docker Desktop running)
-docker compose up -d --build   # Postgres + Airflow (first build ~2 min)
+# 1. export .env into the shell (dbt & Airflow read the shell, not .env)
+set -a; source .env; set +a
 
-# 2. (host, occasional) create silver — heavy ML/parsing
+# 2. (host, occasional) create silver — heavy ML/parsing → writes to the R2 lake
 python -m src.ingestion.kaggle_jobs
 python -m src.ingestion.tech_jobs
-#   + the github silver scripts (gharchive_signals / pr_signals / churn_signals)
+#   + github silver: gharchive_signals / gharchive_pr_signals / churn_signals
 
-# 3. load silver + build gold (either via Airflow or by hand)
+# 3. load silver (from R2) + build gold (in Neon)
 python -m src.db.load_silver_to_postgres
 python -m src.db.load_github_silver_to_postgres
 cd dbt && dbt run --profiles-dir . && dbt test --profiles-dir . && cd ..
 
 # 4. dashboard
-streamlit run app.py           # http://localhost:8501
+streamlit run app.py     # http://localhost:8501
 ```
 
-Airflow UI: http://localhost:8080 (admin/admin) — trigger `aiwork_pipeline`.
+Airflow stack (for the scheduled Adzuna DAG): `docker compose up -d --build`,
+then trigger `aiwork_adzuna_daily` at http://localhost:8080.
 
-## Repo layout
+### `.env` keys
 ```
-src/ingestion/     bronze → silver (Python: crosswalk, tagging)
-src/transform/     ESCO crosswalk, AI-skill tagger, GH signal parsers
-src/db/            silver → Postgres loaders
-dbt/               gold as SQL models + tests (both pillars)
-airflow/           DAG + Dockerfile (dbt baked in)
-app.py             Streamlit dashboard
-docker-compose.yml Postgres + Airflow
-docs/              pipeline_reference.md, silver_schema.md, week notes
+PGHOST / PGPORT / PGDATABASE / PGUSER / PGPASSWORD / PGSSLMODE=require   # Neon
+LAKE_ROOT=s3://<bucket>                                                  # R2 lake root
+AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_DEFAULT_REGION=auto       # R2 creds
+S3_ENDPOINT_URL=https://<acct>.r2.cloudflarestorage.com                  # R2 endpoint (config.py)
+AWS_ENDPOINT_URL_S3=https://<acct>.r2.cloudflarestorage.com              # R2 endpoint (pandas/s3fs)
+ADZUNA_APP_ID / ADZUNA_APP_KEY                                           # Adzuna API
+GOLD_BACKEND=postgres
 ```
+`.env` is gitignored — never commit it. R2 values go in the `AWS_*` variable
+names (S3-compatible convention); `S3_ENDPOINT_URL` routes them to Cloudflare.
 
-## Honest limitations
-Git-attributable AI only (undercounts silent Copilot); PR quality is
-autonomous-agents-only and small-N; churn measures activity not proven quality;
-jobs AI-usage is sparse (report direction, not precise rates); tech "usage" is
-0 by artifact (tagged from a structured skills field). Data is a fixed snapshot,
-so the pipeline is on-demand (`schedule=None`), not live-scheduled.
+### Deploy (Streamlit Community Cloud)
+Push to a public repo → share.streamlit.io → pick `app.py` → add the same keys
+under **Secrets** (top-level, TOML). Add `.streamlit/config.toml` (dark theme) to
+the repo so the deployed app renders dark.
 
 ---
 
-## Command reference
-
-All commands run from the project root unless noted.
-
-### Setup
-```bash
-pip install -r requirements.txt        # install deps
-cp env.example .env                    # create env (GOLD_BACKEND=postgres, PG* creds)
-cat .env                               # verify contents
+## Repo layout
+```
+src/common/config.py     LAKE_ROOT + S3 endpoint (local ⇄ R2/S3/MinIO)
+src/ingestion/           bronze → silver (kaggle_jobs, tech_jobs, adzuna)
+src/transform/           ESCO crosswalk, AI-skill tagger, GH signal parsers, churn
+src/db/                  silver → Neon loaders (COPY, read from R2)
+dbt/                     gold as SQL models + tests (both pillars)
+airflow/dags/            aiwork_pipeline (rebuild) + aiwork_adzuna_daily (scheduled)
+airflow/Dockerfile       dbt + s3fs/requests baked into the image
+app.py                   Streamlit dashboard
+.streamlit/config.toml   dark theme
+docker-compose.yml       Airflow stack
+docs/                    pipeline_reference_cloud.md, week notes
 ```
 
-### Docker stack (Postgres + Airflow)
+## Honest limitations
+Git-attributable AI only (undercounts silent Copilot — adoption is a floor); PR
+quality is autonomous-agents-only and small-N; churn measures activity within a
+14-day window, not proven quality; jobs AI-usage is sparse (report direction, not
+precise rates); tech "usage" is ~0 by artifact (tagged from a structured skills
+field). Adzuna returns short descriptions (thin AI-skill signal) and no salary in
+some categories. Airflow runs locally, so daily scheduling fires while the machine
+is up. Trends across sources are **parallel**, not fitted correlations.
+
+---
+
+## Command reference (cloud)
+
 ```bash
-open -a Docker                         # macOS: start Docker Desktop, wait until ready
-docker compose up -d --build           # build + start all services (first build ~2 min)
-docker compose ps                      # all services "Up" (postgres, airflow-web, -scheduler)
-docker compose logs -f airflow-init    # watch first-time init (ends "User admin created")
-docker compose down                    # stop everything (keeps data volume)
-docker compose down -v                 # stop + wipe the pg volume (fresh start)
-docker compose restart airflow-scheduler   # reload after changing a DAG
-```
+# always export env first (dbt & Airflow read the shell)
+set -a; source .env; set +a
 
-### Create silver (host — heavy ML/parsing, run when data changes)
-```bash
-python -m src.ingestion.kaggle_jobs    # general jobs → silver
-python -m src.ingestion.tech_jobs      # tech jobs → silver
-# (+ github silver: gharchive_signals / gharchive_pr_signals / churn_signals)
-```
+# --- lake (R2) sanity ---
+python -c "import os,s3fs; r=os.environ['LAKE_ROOT'][5:]; \
+  fs=s3fs.S3FileSystem(client_kwargs={'endpoint_url':os.environ['S3_ENDPOINT_URL']}); \
+  print(fs.ls(r))"
 
-### Load silver into Postgres
-```bash
-python -m src.db.load_silver_to_postgres          # jobs silver → silver.*
-python -m src.db.load_github_silver_to_postgres   # github silver → silver.*
-```
+# --- verify gold + silver in Neon ---
+python -c "import os; from dotenv import load_dotenv; load_dotenv(); \
+  from sqlalchemy import create_engine, text; import pandas as pd; \
+  e=create_engine(f\"postgresql+psycopg2://{os.environ['PGUSER']}:{os.environ['PGPASSWORD']}@{os.environ['PGHOST']}:5432/{os.environ['PGDATABASE']}?sslmode=require\"); \
+  print(pd.read_sql('select schemaname,relname,n_live_tup from pg_stat_user_tables where schemaname in (\'silver\',\'gold\') order by 1,2', e))"
 
-### Build + test gold with dbt
-```bash
-cd dbt
-dbt debug   --profiles-dir .           # check project + DB connection
-dbt run     --profiles-dir .           # build all 8 gold tables (both pillars)
-dbt test    --profiles-dir .           # run data tests
-dbt docs generate --profiles-dir .     # build lineage/docs
-dbt docs serve    --profiles-dir .     # view the DAG in a browser
-cd ..
-```
+# --- Adzuna daily DAG ---
+docker compose exec airflow-scheduler airflow dags unpause aiwork_adzuna_daily
+docker compose exec airflow-scheduler airflow dags trigger aiwork_adzuna_daily
+docker compose exec airflow-scheduler airflow dags list-runs -d aiwork_adzuna_daily
 
-### Run the pipeline via Airflow
-```bash
-# UI: http://localhost:8080  (admin / admin) → enable + trigger "aiwork_pipeline"
+# --- rebuild DAG (load silver → dbt) ---
+docker compose exec airflow-scheduler airflow dags trigger aiwork_pipeline
 
-# CLI:
-docker exec aiwork_airflow_scheduler airflow dags list | grep aiwork
-docker exec aiwork_airflow_scheduler airflow dags trigger aiwork_pipeline
-docker exec aiwork_airflow_scheduler airflow dags list-runs -d aiwork_pipeline      # state: success
-docker exec aiwork_airflow_scheduler airflow tasks states-for-dag-run aiwork_pipeline <run_id>
-docker exec aiwork_airflow_scheduler airflow tasks test aiwork_pipeline dbt_run 2026-08-19   # test one task
-docker exec aiwork_airflow_scheduler which dbt                                      # confirm dbt in image
-```
-
-### Inspect the warehouse
-```bash
-# schemas + tables
-docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "\dn"          # schemas
-docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "\dt silver.*" # silver tables
-docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "\dt gold.*"   # gold tables (8)
-
-# spot-check key results
-docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "select * from gold.github_adoption_by_year;"
-docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "select * from gold.jobs_by_exposure_band_year limit 10;"
-docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "select * from gold.github_merge_rate;"
-
-# interactive shell
-docker exec -it aiwork_postgres psql -U aiwork -d aiwork   # then \dt gold.*  /  select ...  /  \q
-```
-
-### Run the dashboard
-```bash
-streamlit run app.py                   # http://localhost:8501 (reads Postgres via .env)
-
-# confirm it's reading Postgres, not CSVs:
-python -c "from dotenv import load_dotenv; load_dotenv(); import os; print(os.environ.get('GOLD_BACKEND'))"
-# → postgres
-```
-
-### Verify the whole thing (end-to-end checklist)
-```bash
-docker compose ps                                              # 1. services up
-docker exec aiwork_airflow_scheduler airflow dags trigger aiwork_pipeline   # 2. run DAG
-docker exec aiwork_airflow_scheduler airflow dags list-runs -d aiwork_pipeline   #    → success
-docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "\dt gold.*"    # 3. 8 gold tables
-docker exec -it aiwork_postgres psql -U aiwork -d aiwork -c "select * from gold.github_adoption_by_year;"  # 4. 20× jump
-streamlit run app.py                                          # 5. all charts render
-```
-
-### Data-quality audits (silver)
-```bash
-python check_silver.py                 # jobs silver invariants
-python check_gharchive_silver.py       # github silver invariants (dedup, num≤denom, enums)
-```
-
-### Git hygiene
-```bash
-git status                             # what's staged
-git rm -r --cached data/bronze data/silver   # untrack large/regenerable data (keep on disk)
+# --- dashboard ---
+streamlit run app.py
 ```

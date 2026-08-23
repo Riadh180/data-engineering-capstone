@@ -1,4 +1,4 @@
-# Pipeline Reference — Cloud Architecture (v3)
+# Pipeline Reference — Cloud Architecture (v4)
 
 **AI × Work** — a two-pillar data pipeline measuring how AI is entering (1) real
 codebases and (2) the German job market. This version documents the **cloud
@@ -21,8 +21,8 @@ flowchart TD
     LAKE -->|loaders read| SILVER[("Neon Postgres<br/>silver.*")]
     SILVER -->|dbt SQL models| GOLD[("Neon Postgres<br/>gold.*")]
     GOLD --> APP["Streamlit Community Cloud<br/>public dashboard"]
-    AIRFLOW["Airflow DAG<br/>orchestration + daily schedule"] -.orchestrates.-> ING
-    AIRFLOW -.->|@daily Adzuna pull| SRC
+    AIRFLOW["Airflow<br/>orchestration + scheduling"] -.->|@daily · triggers Adzuna| SRC
+    AIRFLOW -.->|on-demand · load + dbt rebuild| SILVER
 ```
 
 ## The medallion flow
@@ -54,8 +54,8 @@ accepted and durable?
 ```mermaid
 flowchart LR
     subgraph BR["🥉 bronze (R2)"]
-      GA["gharchive/*.json.gz<br/>22 monthly hourly samples<br/>2023–2025"]
-      GF["gharchive_fullday/<br/>4 sampled days × 24h"]
+      GA["bronze/gharchive/<br/>22 monthly hourly samples<br/>2023–2025"]
+      GF["bronze/gharchive_fullday/<br/>4 sampled days × 24h"]
       RP["git repos (cloned)<br/>airbyte · cal.com · OpenHands"]
     end
     subgraph TX["transforms (Python)"]
@@ -63,10 +63,10 @@ flowchart LR
       T2["gharchive_pr_signals.py"]
       T3["churn_signals.py<br/>(PyDriller)"]
     end
-    subgraph SI["🥈 silver → Neon"]
-      S1["gh_matches<br/>gh_totals"]
-      S2["gh_pr_outcomes<br/>gh_pr_reviews"]
-      S3["gh_churn_events"]
+    subgraph SI["🥈 silver/github/ (R2) → Neon"]
+      S1["adoption/  → gh_matches, gh_totals"]
+      S2["pr_quality/dt=*/  → gh_pr_outcomes, gh_pr_reviews"]
+      S3["churn/  → gh_churn_events"]
     end
     subgraph GO["🥇 gold (dbt, Neon)"]
       G1["github_adoption_by_year / _by_month"]
@@ -199,7 +199,7 @@ flowchart LR
 | **Warehouse** | Docker Postgres on laptop | **Neon** (managed serverless Postgres) |
 | **Serving** | `localhost:8501` | **Streamlit Community Cloud** (public URL) |
 | **Orchestration** | Airflow, `schedule=None` | Airflow with **daily Adzuna ingestion** |
-| **Portability** | hardcoded `data/…` paths | `LAKE_ROOT` + `S3_ENDPOINT_URL` (S3 / R2 / MinIO) |
+| **Portability** | hardcoded `data/…` paths | one endpoint setting → Cloudflare R2 / AWS S3 / MinIO, no code change |
 
 **One storage boundary in code** (`src/common/config.py`): `LAKE_ROOT` selects
 local vs cloud, `S3_ENDPOINT_URL` selects the provider — so the pipeline runs
@@ -207,23 +207,51 @@ unchanged on local disk, AWS S3, Cloudflare R2, or self-hosted MinIO. No lock-in
 
 ---
 
-## Orchestration + scheduling — Airflow
+## Orchestration + scheduling — Airflow (two DAGs)
 
 ```mermaid
 flowchart LR
-    ADZ["adzuna_ingest<br/>(@daily)"] --> LJS["load_jobs_silver"]
-    LJS --> DR
-    LGS["load_gh_silver"] --> DR["dbt_run"]
-    DR --> DT["dbt_test"]
+    subgraph D1["aiwork_adzuna_daily  ·  @daily"]
+      ADZ["adzuna_ingest<br/>(multi-category → R2 lake)"]
+    end
+    subgraph D2["aiwork_pipeline  ·  on-demand"]
+      LJS["load_jobs_silver"] --> DR["dbt_run"]
+      LGS["load_gh_silver"] --> DR --> DT["dbt_test"]
+    end
 ```
 
-The **daily Adzuna ingestion** pulls fresh German postings from the Adzuna API,
-lands them in the R2 lake (bronze → silver); the loaders feed Neon and dbt
-rebuilds gold — so real new data flows through to the dashboard each day. Heavy
-ML extraction (embedding crosswalk, PyDriller mining) runs outside the
-orchestrator by design.
+**`aiwork_adzuna_daily`** (`@daily`) is the live data-collection engine: it pulls
+fresh German postings across several categories from the Adzuna API and lands them
+in the R2 lake (`bronze/adzuna/dt=<date>/` + enriched `silver/adzuna/dt=<date>/`),
+a new dated partition per run. It runs in-container (lightweight keyword crosswalk
++ regex tagger — no embedding model).
+
+**`aiwork_pipeline`** (on-demand) loads both pillars' silver from R2 into Neon,
+then `dbt run` + `dbt test` rebuild and validate gold. Heavy silver creation
+(embedding crosswalk, GH-Archive parsing, PyDriller mining) runs on the host by
+design.
+
+> **Adzuna silver is lake-only** — a different schema from the batch job silver,
+> so it accumulates in R2 but isn't loaded into Neon/gold. Its freshness is shown
+> in the dashboard's **Architecture** tab (live panel).
+>
+> Airflow runs locally in Docker; scheduled runs fire while the machine is up. In
+> production it would deploy to managed Airflow (MWAA/Composer) — DAGs unchanged.
 
 ---
+
+## Dashboard
+
+Six tabs — **Adoption · Jobs · Acceptance · Durability · Synthesis · Architecture**
+— reading `gold.*` from Neon (`GOLD_BACKEND=postgres`), each chart annotated with
+*What / Why / Honest-limitation*. Highlights:
+
+- **Jobs** opens with an **ILO-style AI-exposure snapshot**: every occupation
+  posted in a chosen year, plotted by mean exposure score (x) × task-score
+  variability (y), coloured by exposure gradient, bubble-sized by postings — a
+  yearly snapshot alongside the trend charts.
+- **Architecture** renders this cloud diagram, the stack, per-pillar lineage, and
+  a **live Adzuna panel** reading the latest `silver/adzuna` partition from R2.
 
 ## The stack at a glance
 
