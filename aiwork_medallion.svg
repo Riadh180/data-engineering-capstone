@@ -1,0 +1,118 @@
+<svg viewBox="0 0 1320 720" xmlns="http://www.w3.org/2000/svg" font-family="Inter, Segoe UI, system-ui, sans-serif" width="100%">
+  <defs>
+    <linearGradient id="mbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#243247"/><stop offset="0.55" stop-color="#2E4260"/><stop offset="1" stop-color="#37507A"/>
+    </linearGradient>
+    <radialGradient id="mBronze" cx="38%" cy="30%" r="82%"><stop offset="0" stop-color="#FFD9A8"/><stop offset="0.5" stop-color="#D2823A"/><stop offset="1" stop-color="#834714"/></radialGradient>
+    <radialGradient id="mSilver" cx="38%" cy="30%" r="82%"><stop offset="0" stop-color="#FFFFFF"/><stop offset="0.5" stop-color="#C8D0DC"/><stop offset="1" stop-color="#848E9E"/></radialGradient>
+    <radialGradient id="mGold" cx="38%" cy="30%" r="82%"><stop offset="0" stop-color="#FFF6B8"/><stop offset="0.5" stop-color="#F2B705"/><stop offset="1" stop-color="#AB7600"/></radialGradient>
+    <radialGradient id="mDash" cx="38%" cy="30%" r="80%"><stop offset="0" stop-color="#A6EFEA"/><stop offset="0.5" stop-color="#3FB3AD"/><stop offset="1" stop-color="#1F6E6A"/></radialGradient>
+    <linearGradient id="mflow" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#F0B072"/><stop offset="0.5" stop-color="#DCE2EA"/><stop offset="1" stop-color="#FCE38A"/></linearGradient>
+    <linearGradient id="ribD" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#46598C"/><stop offset="1" stop-color="#2A3960"/></linearGradient>
+    <linearGradient id="ribL" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5C74AE"/><stop offset="1" stop-color="#3A4E7E"/></linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.6"/><stop offset="0.5" stop-color="#ffffff" stop-opacity="0.06"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#000000" flood-opacity="0.45"/></filter>
+    <filter id="glowB" x="-70%" y="-70%" width="240%" height="240%"><feDropShadow dx="0" dy="0" stdDeviation="12" flood-color="#E08A2E" flood-opacity="0.6"/></filter>
+    <filter id="glowS" x="-70%" y="-70%" width="240%" height="240%"><feDropShadow dx="0" dy="0" stdDeviation="12" flood-color="#C8D0DC" flood-opacity="0.6"/></filter>
+    <filter id="glowG" x="-70%" y="-70%" width="240%" height="240%"><feDropShadow dx="0" dy="0" stdDeviation="14" flood-color="#F2B705" flood-opacity="0.75"/></filter>
+    <marker id="mah" markerWidth="12" markerHeight="12" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#EAF0F7"/></marker>
+  </defs>
+
+  <rect x="0" y="0" width="1320" height="720" fill="url(#mbg)" rx="18"/>
+
+  <text x="660" y="52" text-anchor="middle" fill="#FFFFFF" font-size="32" font-weight="800" letter-spacing="0.5">Medallion Flow</text>
+  <text x="660" y="82" text-anchor="middle" fill="#FCD879" font-size="17" font-weight="600">raw  →  refined  →  ready  →  served</text>
+
+  <!-- SOURCES -->
+  <rect x="34" y="214" width="150" height="150" rx="16" fill="#1E2C40" stroke="#4A5876" stroke-width="1.5" filter="url(#soft)"/>
+  <text x="109" y="266" text-anchor="middle" font-size="50">📦</text>
+  <text x="109" y="300" text-anchor="middle" fill="#F5F7FB" font-size="15" font-weight="600">Sources</text>
+  <text x="109" y="322" text-anchor="middle" fill="#C6CDDD" font-size="11.5">GitHub Archive · repos</text>
+  <text x="109" y="339" text-anchor="middle" fill="#C6CDDD" font-size="11.5">jobs · Adzuna API</text>
+
+  <!-- flow arrows -->
+  <line x1="188" y1="276" x2="252" y2="276" stroke="url(#mflow)" stroke-width="6" marker-end="url(#mah)"/>
+  <line x1="422" y1="276" x2="524" y2="276" stroke="url(#mflow)" stroke-width="6" marker-end="url(#mah)"/>
+  <line x1="694" y1="276" x2="796" y2="276" stroke="url(#mflow)" stroke-width="6" marker-end="url(#mah)"/>
+  <line x1="966" y1="276" x2="1066" y2="276" stroke="url(#mflow)" stroke-width="6" marker-end="url(#mah)"/>
+
+  <!-- ===== custom medals: ribbon from above → disc centered in circle ===== -->
+  <!-- BRONZE -->
+  <polygon points="300,150 322,150 344,250 320,250" fill="url(#ribD)" filter="url(#soft)"/>
+  <polygon points="372,150 350,150 328,250 352,250" fill="url(#ribL)"/>
+  <rect x="320" y="146" width="32" height="12" rx="3" fill="#3A4E7E"/>
+  <g filter="url(#glowB)">
+    <circle cx="336" cy="276" r="76" fill="url(#mBronze)" stroke="#6E3C12" stroke-width="5"/>
+    <circle cx="336" cy="276" r="60" fill="none" stroke="#FFE7C4" stroke-width="2" opacity="0.45"/>
+  </g>
+  <text x="336" y="276" text-anchor="middle" dominant-baseline="central" font-size="60" font-weight="800" fill="#5A3312">★</text>
+  <ellipse cx="336" cy="244" rx="54" ry="30" fill="url(#gloss)"/>
+
+  <!-- SILVER -->
+  <polygon points="572,150 594,150 616,250 592,250" fill="url(#ribD)" filter="url(#soft)"/>
+  <polygon points="644,150 622,150 600,250 624,250" fill="url(#ribL)"/>
+  <rect x="592" y="146" width="32" height="12" rx="3" fill="#3A4E7E"/>
+  <g filter="url(#glowS)">
+    <circle cx="608" cy="276" r="76" fill="url(#mSilver)" stroke="#727C8C" stroke-width="5"/>
+    <circle cx="608" cy="276" r="60" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.55"/>
+  </g>
+  <text x="608" y="276" text-anchor="middle" dominant-baseline="central" font-size="60" font-weight="800" fill="#5A6472">★</text>
+  <ellipse cx="608" cy="244" rx="54" ry="30" fill="url(#gloss)"/>
+
+  <!-- GOLD -->
+  <polygon points="844,150 866,150 888,250 864,250" fill="url(#ribD)" filter="url(#soft)"/>
+  <polygon points="916,150 894,150 872,250 896,250" fill="url(#ribL)"/>
+  <rect x="864" y="146" width="32" height="12" rx="3" fill="#3A4E7E"/>
+  <g filter="url(#glowG)">
+    <circle cx="880" cy="276" r="78" fill="url(#mGold)" stroke="#A6740A" stroke-width="5"/>
+    <circle cx="880" cy="276" r="62" fill="none" stroke="#FFF6C8" stroke-width="2" opacity="0.6"/>
+  </g>
+  <text x="880" y="276" text-anchor="middle" dominant-baseline="central" font-size="64" font-weight="800" fill="#7A5600">★</text>
+  <ellipse cx="880" cy="242" rx="56" ry="32" fill="url(#gloss)"/>
+
+  <!-- DASHBOARD -->
+  <g filter="url(#soft)"><circle cx="1140" cy="276" r="64" fill="url(#mDash)" stroke="#1F5F5C" stroke-width="5"/></g>
+  <text x="1140" y="276" text-anchor="middle" dominant-baseline="central" font-size="66">📊</text>
+  <ellipse cx="1140" cy="250" rx="44" ry="24" fill="url(#gloss)"/>
+
+  <!-- BRONZE panel -->
+  <rect x="216" y="384" width="240" height="196" rx="14" fill="#2A3346" stroke="#F0B072" stroke-width="2" filter="url(#soft)"/>
+  <text x="336" y="414" text-anchor="middle" fill="#F0B072" font-size="17" font-weight="700">BRONZE — raw</text>
+  <text x="336" y="440" text-anchor="middle" fill="#E9EDF3" font-size="12.5">Untouched source data,</text>
+  <text x="336" y="458" text-anchor="middle" fill="#E9EDF3" font-size="12.5">exactly as pulled — traceable.</text>
+  <rect x="256" y="472" width="160" height="24" rx="12" fill="#3A2E1E"/><text x="336" y="489" text-anchor="middle" fill="#F0B072" font-size="12" font-weight="600">🗄️ Cloudflare R2 · bronze/</text>
+  <text x="336" y="518" text-anchor="middle" fill="#B9C2D2" font-size="11">GH events (JSON) · job CSVs</text>
+  <text x="336" y="535" text-anchor="middle" fill="#B9C2D2" font-size="11">· Adzuna API responses</text>
+
+  <!-- SILVER panel -->
+  <rect x="488" y="384" width="240" height="196" rx="14" fill="#2A3346" stroke="#C7CFDB" stroke-width="2" filter="url(#soft)"/>
+  <text x="608" y="414" text-anchor="middle" fill="#E6EAF3" font-size="17" font-weight="700">SILVER — enriched</text>
+  <text x="608" y="440" text-anchor="middle" fill="#E9EDF3" font-size="12.5">The heavy lifting: embeddings,</text>
+  <text x="608" y="458" text-anchor="middle" fill="#E9EDF3" font-size="12.5">AI-tagging, git-history mining.</text>
+  <rect x="528" y="472" width="160" height="24" rx="12" fill="#333B49"/><text x="608" y="489" text-anchor="middle" fill="#CFD6E2" font-size="12" font-weight="600">🗄️ Cloudflare R2 · silver/</text>
+  <text x="608" y="518" text-anchor="middle" fill="#B9C2D2" font-size="11">title → ISCO code · ILO exposure</text>
+  <text x="608" y="535" text-anchor="middle" fill="#B9C2D2" font-size="11">· AI-usage / AI-building tags</text>
+
+  <!-- GOLD panel -->
+  <rect x="760" y="384" width="240" height="196" rx="14" fill="#2A3346" stroke="#F0A202" stroke-width="2" filter="url(#soft)"/>
+  <text x="880" y="414" text-anchor="middle" fill="#FCE38A" font-size="17" font-weight="700">GOLD — analysis-ready</text>
+  <text x="880" y="440" text-anchor="middle" fill="#E9EDF3" font-size="12.5">Grouped &amp; scored tables,</text>
+  <text x="880" y="458" text-anchor="middle" fill="#E9EDF3" font-size="12.5">built by dbt, and tested.</text>
+  <rect x="798" y="472" width="164" height="24" rx="12" fill="#3A331E"/><text x="880" y="489" text-anchor="middle" fill="#FCE38A" font-size="12" font-weight="600">🗃️ Neon · 🔧 dbt (SQL)</text>
+  <text x="880" y="518" text-anchor="middle" fill="#B9C2D2" font-size="11">adoption / year · merge rate</text>
+  <text x="880" y="535" text-anchor="middle" fill="#B9C2D2" font-size="11">· exposure by band · churn</text>
+
+  <!-- DASHBOARD panel -->
+  <rect x="1050" y="384" width="180" height="196" rx="14" fill="#233642" stroke="#4FB7B2" stroke-width="2" filter="url(#soft)"/>
+  <text x="1140" y="414" text-anchor="middle" fill="#6FD0CB" font-size="17" font-weight="700">DASHBOARD</text>
+  <text x="1140" y="440" text-anchor="middle" fill="#E3F0EF" font-size="12.5">Public interactive app;</text>
+  <text x="1140" y="458" text-anchor="middle" fill="#E3F0EF" font-size="12.5">charts read gold.</text>
+  <rect x="1072" y="472" width="136" height="24" rx="12" fill="#1C2E2C"/><text x="1140" y="489" text-anchor="middle" fill="#6FD0CB" font-size="12" font-weight="600">📊 Streamlit Cloud</text>
+  <text x="1140" y="518" text-anchor="middle" fill="#A7C7C4" font-size="11">6 tabs · live badge</text>
+
+  <!-- Airflow ribbon -->
+  <rect x="216" y="622" width="784" height="58" rx="14" fill="#2A2A16" stroke="#F0A202" stroke-width="2" stroke-dasharray="7 5" filter="url(#soft)"/>
+  <text x="608" y="648" text-anchor="middle" fill="#FBBF3A" font-size="15" font-weight="700">⚙️ Airflow — orchestrates every step</text>
+  <text x="608" y="669" text-anchor="middle" fill="#E8C98A" font-size="12.5">on-demand rebuild (load → dbt → test)  ·  pulls fresh Adzuna jobs into the lake DAILY</text>
+  <text x="1140" y="660" text-anchor="middle" fill="#AEB6C8" font-size="11">portable · S3 / R2 / MinIO · ~$0/mo</text>
+</svg>

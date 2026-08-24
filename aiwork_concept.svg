@@ -1,0 +1,75 @@
+<svg viewBox="0 0 1240 600" xmlns="http://www.w3.org/2000/svg" font-family="Inter, Segoe UI, system-ui, sans-serif" width="100%">
+  <defs>
+    <linearGradient id="qbg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#EEF0FB"/><stop offset="1" stop-color="#E4E8F7"/></linearGradient>
+    <linearGradient id="ctr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4C2A86"/><stop offset="1" stop-color="#6D3BB0"/></linearGradient>
+    <linearGradient id="codeh" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#1C4E80"/><stop offset="1" stop-color="#2A6DA8"/></linearGradient>
+    <linearGradient id="jobsh" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#9E2B67" /><stop offset="1" stop-color="#C0417F"/></linearGradient>
+  </defs>
+  <rect x="0" y="0" width="1240" height="600" rx="18" fill="url(#qbg)"/>
+
+  <!-- center -->
+  <rect x="440" y="26" width="360" height="86" rx="16" fill="url(#ctr)"/>
+  <text x="620" y="64" text-anchor="middle" fill="#fff" font-size="26" font-weight="700">🤖  AI × Work</text>
+  <text x="620" y="92" text-anchor="middle" fill="#E7DBFB" font-size="15">Is AI reshaping how we work?</text>
+
+  <!-- connectors center -> branches -->
+  <path d="M520,112 C420,150 320,150 300,176" fill="none" stroke="#8A93A8" stroke-width="2.5"/>
+  <path d="M720,112 C820,150 920,150 940,176" fill="none" stroke="#8A93A8" stroke-width="2.5"/>
+
+  <!-- CODE branch header -->
+  <rect x="120" y="176" width="360" height="70" rx="14" fill="url(#codeh)"/>
+  <text x="300" y="209" text-anchor="middle" fill="#fff" font-size="20" font-weight="700">🧑‍💻  AI in CODE</text>
+  <text x="300" y="231" text-anchor="middle" fill="#D6E6F5" font-size="13">is AI entering real software?</text>
+
+  <!-- JOBS branch header -->
+  <rect x="760" y="176" width="360" height="70" rx="14" fill="url(#jobsh)"/>
+  <text x="940" y="209" text-anchor="middle" fill="#fff" font-size="20" font-weight="700">💼  AI in the JOB MARKET</text>
+  <text x="940" y="231" text-anchor="middle" fill="#F6DCEC" font-size="13">is hiring reacting to AI?</text>
+
+  <!-- CODE sub-cards -->
+  <g>
+    <rect x="70" y="300" width="150" height="150" rx="13" fill="#fff" stroke="#2A6DA8" stroke-width="2"/>
+    <text x="145" y="345" text-anchor="middle" font-size="40">📈</text>
+    <text x="145" y="378" text-anchor="middle" fill="#1C4E80" font-size="15" font-weight="700">Adoption</text>
+    <text x="145" y="402" text-anchor="middle" fill="#41506A" font-size="12">is AI writing</text>
+    <text x="145" y="419" text-anchor="middle" fill="#41506A" font-size="12">real code?</text>
+    <text x="145" y="438" text-anchor="middle" fill="#8A93A8" font-size="11.5">— and rising?</text>
+    <rect x="235" y="300" width="150" height="150" rx="13" fill="#fff" stroke="#2A6DA8" stroke-width="2"/>
+    <text x="310" y="345" text-anchor="middle" font-size="40">✅</text>
+    <text x="310" y="378" text-anchor="middle" fill="#1C4E80" font-size="15" font-weight="700">Acceptance</text>
+    <text x="310" y="402" text-anchor="middle" fill="#41506A" font-size="12">does its code</text>
+    <text x="310" y="419" text-anchor="middle" fill="#41506A" font-size="12">get merged?</text>
+    <rect x="400" y="300" width="150" height="150" rx="13" fill="#fff" stroke="#2A6DA8" stroke-width="2"/>
+    <text x="475" y="345" text-anchor="middle" font-size="40">🔧</text>
+    <text x="475" y="378" text-anchor="middle" fill="#1C4E80" font-size="15" font-weight="700">Durability</text>
+    <text x="475" y="402" text-anchor="middle" fill="#41506A" font-size="12">is it reworked</text>
+    <text x="475" y="419" text-anchor="middle" fill="#41506A" font-size="12">more than human?</text>
+  </g>
+  <line x1="300" y1="246" x2="300" y2="298" stroke="#2A6DA8" stroke-width="2"/>
+
+  <!-- JOBS sub-cards -->
+  <g>
+    <rect x="690" y="300" width="150" height="150" rx="13" fill="#fff" stroke="#C0417F" stroke-width="2"/>
+    <text x="765" y="345" text-anchor="middle" font-size="40">🌡️</text>
+    <text x="765" y="378" text-anchor="middle" fill="#9E2B67" font-size="15" font-weight="700">Exposure</text>
+    <text x="765" y="402" text-anchor="middle" fill="#5A3247" font-size="12">which jobs are</text>
+    <text x="765" y="419" text-anchor="middle" fill="#5A3247" font-size="12">AI-exposed?</text>
+    <text x="765" y="438" text-anchor="middle" fill="#A8899A" font-size="11.5">— ILO scale</text>
+    <rect x="855" y="300" width="150" height="150" rx="13" fill="#fff" stroke="#C0417F" stroke-width="2"/>
+    <text x="930" y="345" text-anchor="middle" font-size="40">🙋</text>
+    <text x="930" y="378" text-anchor="middle" fill="#9E2B67" font-size="15" font-weight="700">Using AI</text>
+    <text x="930" y="402" text-anchor="middle" fill="#5A3247" font-size="12">jobs wanting</text>
+    <text x="930" y="419" text-anchor="middle" fill="#5A3247" font-size="12">AI users</text>
+    <rect x="1020" y="300" width="150" height="150" rx="13" fill="#fff" stroke="#C0417F" stroke-width="2"/>
+    <text x="1095" y="345" text-anchor="middle" font-size="40">🛠️</text>
+    <text x="1095" y="378" text-anchor="middle" fill="#9E2B67" font-size="15" font-weight="700">Building AI</text>
+    <text x="1095" y="402" text-anchor="middle" fill="#5A3247" font-size="12">jobs building</text>
+    <text x="1095" y="419" text-anchor="middle" fill="#5A3247" font-size="12">AI / ML</text>
+  </g>
+  <line x1="940" y1="246" x2="940" y2="298" stroke="#C0417F" stroke-width="2"/>
+
+  <!-- up/down motif -->
+  <rect x="440" y="500" width="360" height="64" rx="14" fill="#2B2340" />
+  <text x="620" y="530" text-anchor="middle" fill="#FBBF3A" font-size="15" font-weight="700">📈  up   or   📉  down?</text>
+  <text x="620" y="551" text-anchor="middle" fill="#D9D2EC" font-size="12.5">do AI-exposed jobs rise or fall over time?</text>
+</svg>
