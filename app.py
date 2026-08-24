@@ -20,14 +20,16 @@ BUCKET_ORDER = ["0-20", "20-100", "100-500", "500+"]
 pio.templates["aiwork"] = go.layout.Template(layout=dict(
     paper_bgcolor=BG, plot_bgcolor=BG,
     font=dict(color=TXT, family="Inter, system-ui, sans-serif", size=13),
-    xaxis=dict(gridcolor=GRID, zeroline=False, linecolor=GRID, title_font=dict(color=MUTED)),
-    yaxis=dict(gridcolor=GRID, zeroline=False, linecolor=GRID, title_font=dict(color=MUTED)),
+    xaxis=dict(gridcolor=GRID, zeroline=False, linecolor=GRID,
+               title_font=dict(color=MUTED, size=13), tickfont=dict(color=TXT, size=12), automargin=True),
+    yaxis=dict(gridcolor=GRID, zeroline=False, linecolor=GRID,
+               title_font=dict(color=MUTED, size=13), tickfont=dict(color=TXT, size=12), automargin=True),
     margin=dict(l=10, r=10, t=40, b=10), hoverlabel=dict(font_size=13),
     legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(color=TXT))))
 
 def base(fig, title=None, h=380):
     fig.update_layout(template="aiwork", height=h,
-                      margin=dict(l=10, r=10, t=64, b=10),
+                      margin=dict(l=64, r=24, t=64, b=56),
                       title=dict(text=title, font=dict(size=16),
                                  y=0.97, yanchor="top", x=0.01, xanchor="left") if title else None)
     return fig
