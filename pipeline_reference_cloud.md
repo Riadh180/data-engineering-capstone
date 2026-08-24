@@ -12,7 +12,19 @@ once it lands in gold.
 
 ---
 
+## What aiwork asks
+
+*One question, two pillars — the whole thesis in one picture.*
+
+![aiwork — what it measures](aiwork_concept.svg)
+
+**In one breath:** *AI is clearly entering code — the question is whether that's good code, and whether the labour market is starting to reward AI skills.* The **ILO** exposure scale ranks jobs by how much AI could touch their tasks; the up/down question asks whether exposed jobs grow or shrink.
+
+---
+
+
 ## Architecture at a glance
+
 
 ```mermaid
 flowchart TD
@@ -21,22 +33,58 @@ flowchart TD
     LAKE -->|loaders read| SILVER[("Neon Postgres<br/>silver.*")]
     SILVER -->|dbt SQL models| GOLD[("Neon Postgres<br/>gold.*")]
     GOLD --> APP["Streamlit Community Cloud<br/>public dashboard"]
-    AIRFLOW["Airflow<br/>orchestration + scheduling"] -.->|@daily · triggers Adzuna| SRC
+    AIRFLOW["Airflow<br/>orchestration + scheduling"] -.->|"@daily · triggers Adzuna"| SRC
     AIRFLOW -.->|on-demand · load + dbt rebuild| SILVER
 ```
 
-## The medallion flow
+## Medallion Flow
+
+![aiwork — medallion flow](aiwork_medallion.svg)
+
+**Read it left to right — the whole pipeline in one glance:**
+
+- **📦 Sources** → GitHub Archive events, cloned git repos, job-posting datasets, and the live Adzuna API.
+- **🥉 BRONZE — raw.** Source data exactly as pulled, untouched, in R2. Kept **traceable** and **re-processable**. *(GH JSON, job CSVs, Adzuna responses.)*
+- **🥈 SILVER — enriched.** The heavy lifting, still in R2: job titles → standard **ISCO codes** (embedding crosswalk), joined to **ILO exposure**, AI-usage/-building tagged; GitHub events parsed; repos mined with PyDriller.
+- **🥇 GOLD — analysis-ready.** Grouped, scored tables built by **dbt** in **Neon**, and **tested**. *(adoption/year, merge rate, exposure/band, churn.)*
+- **📊 DASHBOARD.** The public Streamlit app reads gold — six tabs plus the live badge.
+- **⚙️ Airflow** (dashed ribbon) orchestrates every step and **pulls fresh Adzuna jobs into the lake daily**.
+
+> Colours map to the medals: **bronze** = raw, **silver** = enriched, **gold** = ready. Portable (S3 / R2 / MinIO), ~**$0/month**.
+
+---
+
+
+## The data lake at a glance
+
+*The medallion isn't a metaphor — it's the folder structure. This mirrors the R2 bucket exactly.*
 
 ```mermaid
-flowchart LR
-    B["🥉 BRONZE<br/>raw, untouched<br/>(R2)"] --> S["🥈 SILVER<br/>cleaned · coded · scored<br/>(R2 → Neon)"]
-    S --> G["🥇 GOLD<br/>aggregated for charts<br/>(Neon, dbt)"]
-    G --> V["📊 Dashboard<br/>(Streamlit)"]
+flowchart TB
+    LAKE(["🗄️  R2 lake · aiwork-datalake-riadh<br/><i>S3-compatible → portable to AWS S3 / MinIO</i>"])
+
+    LAKE --> BRONZE["🥉 <b>bronze/</b> — raw, untouched (traceable, re-processable)"]
+    LAKE --> SILVER["🥈 <b>silver/</b> — cleaned + enriched (the real work)"]
+
+    BRONZE --> B1["<b>gharchive/</b> · <b>gharchive_fullday/</b><br/><i>raw GitHub events — compressed JSON</i>"]
+    BRONZE --> B2["<b>kaggle/</b> · <b>tech/</b><br/><i>raw job postings</i>"]
+    BRONZE --> B3["<b>adzuna/dt=YYYY-MM-DD/</b><br/><i>live jobs API — a NEW partition every day</i>"]
+
+    SILVER --> S1["<b>github/</b> → adoption/ · pr_quality/dt=*/ · churn/<br/><i>Pillar 1 signals (the research questions, as folders)</i>"]
+    SILVER --> S2["<b>kaggle/</b> · <b>tech/</b> · <b>adzuna/</b> (dt=*)<br/><i>Pillar 2 — title→ISCO code, ILO exposure, AI-usage/-building tags</i>"]
+
+    classDef bronze fill:#3a2a18,stroke:#8a5a2a,color:#f5e6d0;
+    classDef silver fill:#20242e,stroke:#5a6478,color:#e6eaf3;
+    class BRONZE,B1,B2,B3 bronze;
+    class SILVER,S1,S2 silver;
 ```
+
+**Read it in three beats:** (1) two zones — *bronze* raw, *silver* enriched; (2) the `dt=YYYY-MM-DD` partitions mean the lake **grows daily**, it isn't a static snapshot; (3) the `github/` sub-folders **are** the code-pillar research questions — adoption, PR quality, churn. Everything downstream (Neon, gold, the dashboard) is rebuilt from here, and the whole lake is portable across clouds by changing one endpoint.
 
 ---
 
 # Data lineage by pillar
+
 
 Each pillar below traces the same path: **which raw file in the lake → which
 signal → how it's extracted & cleaned → the silver table → the gold table → a
