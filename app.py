@@ -179,17 +179,37 @@ def load_gold(gold_dir=GOLD):
 
 SILVER_JOBS = os.environ.get("SILVER_JOBS_DIR", "data/silver/kaggle")
 
+def _read_latest_silver(local_base, lake_subdir):
+    """Read the newest dt= partition's CSV from the R2 lake (if LAKE_ROOT is s3://)
+    or from local disk. Returns a DataFrame (empty if nothing found)."""
+    root = os.environ.get("LAKE_ROOT", "").rstrip("/")
+    try:
+        if root.startswith("s3://"):
+            import s3fs
+            ep = os.environ.get("S3_ENDPOINT_URL") or os.environ.get("AWS_ENDPOINT_URL_S3")
+            fs = s3fs.S3FileSystem(client_kwargs={"endpoint_url": ep} if ep else {})
+            base = f"{root[len('s3://'):]}/{lake_subdir}"
+            parts = sorted(fs.glob(f"{base}/dt=*"))
+            if not parts:
+                return pd.DataFrame()
+            hits = fs.glob(f"{parts[-1]}/*.csv")
+            if not hits:
+                return pd.DataFrame()
+            with fs.open(hits[0]) as fh:
+                return pd.read_csv(fh)
+        import glob
+        parts = sorted(glob.glob(os.path.join(local_base, "dt=*")))
+        if not parts:
+            return pd.DataFrame()
+        hits = glob.glob(os.path.join(parts[-1], "*.csv"))
+        return pd.read_csv(hits[0]) if hits else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
 @st.cache_data
 def load_jobs_silver(base=SILVER_JOBS):
-    import glob
-    parts = sorted(glob.glob(os.path.join(base, "dt=*")))
-    if not parts:
-        return pd.DataFrame()
-    hits = glob.glob(os.path.join(parts[-1], "*.csv"))
-    if not hits:
-        return pd.DataFrame()
-    df = pd.read_csv(hits[0])
-    if "date_published" in df:
+    df = _read_latest_silver(base, "silver/kaggle")
+    if not df.empty and "date_published" in df:
         df["date_published"] = pd.to_datetime(df["date_published"], errors="coerce")
     return df
 
@@ -403,14 +423,9 @@ def chart_usage_month_2026(sv):
 
 @st.cache_data
 def load_tech_silver(base=None):
-    import glob
     base = base or os.environ.get("SILVER_TECH_DIR", "data/silver/tech")
-    parts = sorted(glob.glob(os.path.join(base, "dt=*")))
-    if not parts: return pd.DataFrame()
-    hits = glob.glob(os.path.join(parts[-1], "*.csv"))
-    if not hits: return pd.DataFrame()
-    df = pd.read_csv(hits[0])
-    if "posted_date" in df:
+    df = _read_latest_silver(base, "silver/tech")
+    if not df.empty and "posted_date" in df:
         df["posted_date"] = pd.to_datetime(df["posted_date"], errors="coerce")
     return df
 
