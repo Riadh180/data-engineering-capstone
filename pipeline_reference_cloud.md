@@ -83,61 +83,64 @@ flowchart TB
 
 ---
 
-# Data lineage by pillar
+# Data lineage — from raw to chart
 
-
-Each pillar below traces the same path: **which raw file in the lake → which
-signal → how it's extracted & cleaned → the silver table → the gold table → a
-sample of the gold output**.
+*Everything for one signal in one place: **what it starts as** (raw sample) → **what transforms it** (a named feature + technology) → **what it becomes** (silver) → **the gold result** the chart reads. Each sample is labelled with **where that data sits** (lake path, or the Neon table).*
 
 ---
 
 ## 🧑‍💻 Pillar 1 — AI in code (GitHub)
 
-**Question:** is AI actually entering real codebases, and is the code it produces
-accepted and durable?
-
-### Lineage
-
 ```mermaid
 flowchart LR
     subgraph BR["🥉 bronze (R2)"]
-      GA["bronze/gharchive/<br/>22 monthly hourly samples<br/>2023–2025"]
-      GF["bronze/gharchive_fullday/<br/>4 sampled days × 24h"]
-      RP["git repos (cloned)<br/>airbyte · cal.com · OpenHands"]
+      GA["raw GitHub events<br/>(GH Archive · JSON)"]
+      RP["cloned git repos<br/>airbyte · cal.com · OpenHands"]
     end
-    subgraph TX["transforms (Python)"]
-      T1["gharchive_signals.py"]
-      T2["gharchive_pr_signals.py"]
-      T3["churn_signals.py<br/>(PyDriller)"]
+    subgraph TX["transform (Python)"]
+      T1["AI-signal detector"]
+      T2["PR outcome extractor"]
+      T3["Churn miner · PyDriller"]
     end
-    subgraph SI["🥈 silver/github/ (R2) → Neon"]
-      S1["adoption/  → gh_matches, gh_totals"]
-      S2["pr_quality/dt=*/  → gh_pr_outcomes, gh_pr_reviews"]
-      S3["churn/  → gh_churn_events"]
+    subgraph SI["🥈 silver"]
+      S1["flagged commits + totals"]
+      S2["PR outcomes + reviews"]
+      S3["churn events"]
     end
-    subgraph GO["🥇 gold (dbt, Neon)"]
-      G1["github_adoption_by_year / _by_month"]
-      G2["github_merge_rate<br/>github_changes_requested"]
-      G3["github_churn_by_bucket<br/>github_ai_share_by_repo"]
+    subgraph GO["🥇 gold (dbt)"]
+      G1["AI share by year"]
+      G2["merge rate · changes-requested"]
+      G3["churn by size · AI share by repo"]
     end
     GA --> T1 --> S1 --> G1
-    GF --> T2 --> S2 --> G2
+    GA --> T2 --> S2 --> G2
     RP --> T3 --> S3 --> G3
 ```
 
-### Signal by signal
+### ① Adoption — "is AI writing real code?"
 
-| Signal | Source in lake | Extraction & cleaning | Silver | Gold |
+🥉 **Starts as** — `gharchive/*.json.gz` — one raw GitHub event per line:
+```json
+{"type":"PushEvent","repo":{"name":"acme/api"},
+ "payload":{"commits":[{"sha":"a1b2c3d",
+   "message":"Fix retry logic\n\nCo-authored-by: Copilot <copilot@github.com>"}]},
+ "created_at":"2025-04-15T10:22:31Z"}
+```
+🔧 **Transforms it — “AI-signal detector”** *(Python)*: flags a commit as AI-written from three fingerprints — a **Co-authored-by** an AI tool, a **known agent author**, or a **self-admit** phrase — then **de-duplicates by commit SHA** (the archive replays events). Counts AI commits **and** all commits.
+
+🥈 **Becomes** — `github/adoption/matches.csv` (+ `totals.csv`):
+
+| sha | repo | signal | ai_tool | year |
 |---|---|---|---|---|
-| **Adoption** (AI commit share) | `bronze/gharchive/*.json.gz` — `PushEvent` commits + `PullRequestEvent` | Parse one JSON event per line. Per commit, flag AI-authorship: `Co-authored-by:` trailer naming an AI tool, a known AI-agent actor/author, or a self-admit phrase ("generated with ChatGPT"). **Dedupe replayed commits by SHA.** Count matches **and** total commits (the denominator). | `gh_matches`, `gh_totals` | `github_adoption_by_year`, `_by_month` |
-| **Merge rate** (acceptance) | `bronze/gharchive_fullday/` — `PullRequestEvent` (`action=closed`) | One row per closed PR: `merged?`, `size_lines = additions + deletions`, `hours_open`. Label `author_class` = `ai_agent` (autonomous agent) vs `baseline`. Dedupe by (repo, PR#). | `gh_pr_outcomes` | `github_merge_rate` |
-| **Changes requested** (review pushback) | `bronze/gharchive_fullday/` — `PullRequestReviewEvent` | One row per review with its `state` (`changes_requested` / `approved` …) and the PR author's class. | `gh_pr_reviews` | `github_changes_requested` |
-| **Durability** (follow-up churn) | Git repo history via **PyDriller** | Walk each repo commit-by-commit. Classify commit: `ai_agent` (agent authored), `ai_coauthor` (human + AI trailer), else `human`. One row per (commit, file) with `added`/`deleted`/`churn`. Compute **14-day follow-up churn** = churn on the same file within 14 days, by anyone. | `gh_churn_events` | `github_churn_by_bucket`, `github_ai_share_by_repo` |
+| a1b2c3d | acme/api | co_authored_by | copilot | 2025 |
+| f4e5d6c | acme/web | agent_author | devin | 2025 |
+| 9a8b7c6 | beta/cli | self_admit | chatgpt | 2024 |
 
-### Gold samples
+*(`totals.csv` holds the denominator, e.g. 1,033,392 commits in 2025)*
 
-**`github_adoption_by_year`** — the headline: AI-signal commit share by year.
+🔧 **Silver → gold (dbt)**: `GROUP BY year` → `ai_share_pct = sum(matches) / sum(totals)`.
+
+🥇 **Result** — `github_adoption_by_year` (Neon) → **the Adoption chart**:
 
 | year | n_ai_commits | n_commits | ai_share_pct |
 |---|---|---|---|
@@ -145,99 +148,176 @@ flowchart LR
 | 2024 | 115 | 1,513,819 | 0.0076 |
 | 2025 | 1,614 | 1,033,392 | **0.1562** |
 
-*→ ~20× jump in 2025. (Git-attributable AI only — silent Copilot leaves no trace, so this is a floor.)*
+*→ ~20× jump. Git-attributable only, so this is a floor.*
 
-**`github_churn_by_bucket`** — mean 14-day follow-up churn (lines), by class × PR size. *Lower = more durable.*
+---
+
+### ② Acceptance — "does AI's code get merged?"
+
+🥉 **Starts as** — `gharchive_fullday/dt=*/` — raw closed-PR events + review events:
+```json
+{"type":"PullRequestEvent","action":"closed",
+ "payload":{"pull_request":{"merged":true,"additions":40,"deletions":6,
+   "user":{"login":"sweep-ai[bot]"}}}}
+```
+🔧 **Transforms it — “PR outcome extractor”** *(Python)*: one row per closed PR — merged?, size = additions + deletions, hours-open — labelling the author **agent vs baseline**; a second pass reads **review events** and their `state`.
+
+🥈 **Becomes** — `github/pr_quality/dt=*/pr_outcomes.csv` (+ `pr_reviews.csv`):
+
+*pr_outcomes.csv*
+| pr | repo | month | author_login | author_class | merged | size_lines | changed_files | hours_open |
+|---|---|---|---|---|---|---|---|---|
+| 812 | acme/api | 2025-04 | sweep-ai[bot] | ai_agent | true | 46 | 3 | 5.2 |
+| 813 | acme/api | 2025-04 | devin-ai | ai_agent | false | 512 | 21 | 30.1 |
+| 814 | beta/web | 2025-04 | jdoe | baseline | true | 88 | 6 | 11.4 |
+
+*pr_reviews.csv*
+| pr | repo | month | state | pr_author_class |
+|---|---|---|---|---|
+| 813 | acme/api | 2025-04 | changes_requested | ai_agent |
+| 813 | acme/api | 2025-04 | commented | ai_agent |
+| 814 | beta/web | 2025-04 | approved | baseline |
+
+🔧 **Silver → gold (dbt)**: `GROUP BY author_class, size_bucket` → merge rate = `avg(merged)`, and change-request rate = `count(state='changes_requested') / count(*)`.
+
+🥇 **Result** — `github_merge_rate`, `github_changes_requested` (Neon) → **the Acceptance charts**:
+
+| size_bucket | author_class | n_prs | merged_rate |
+|---|---|---|---|
+| 100–500 | ai_agent | 108 | 0.75 |
+| 100–500 | baseline | 99,809 | 0.86 |
+
+*→ agents merge a little less at equal size (small agent N — flagged on the chart).*
+
+---
+
+### ③ Durability — "is AI's code reworked more?"
+
+🥉 **Starts as** — **cloned git repos** (not the lake): `airbyte · cal.com · OpenHands` — full commit history, every file changed.
+
+🔧 **Transforms it — “Churn miner”** *(Python + PyDriller)*: walks each repo commit-by-commit and **classifies each commit** —
+- **`ai_agent`** → the commit **author login/email matches a known agent or bot** (e.g. `*[bot]`, `sweep-ai`, `devin`, `openhands-agent`);
+- **`ai_coauthor`** → a **human** authored it **but** the message carries a `Co-authored-by:` **AI-tool** trailer;
+- **`human`** → neither.
+
+Then it computes **14-day follow-up churn**: how much each touched file is rewritten within two weeks.
+
+🥈 **Becomes** — `github/churn/churn_events.csv` (one row per file-touch, all three classes):
+
+| repo | file | author_class | added | deleted | churn_14d |
+|---|---|---|---|---|---|
+| cal.com | apps/web/app.tsx | ai_agent | 40 | 6 | 12 |
+| airbyte | connectors/sync.py | ai_coauthor | 120 | 20 | 74 |
+| OpenHands | agenthub/agent.py | human | 30 | 10 | 101 |
+| cal.com | packages/ui/button.tsx | ai_agent | 210 | 55 | 84 |
+
+🔧 **Silver → gold (dbt)**: `GROUP BY author_class, size_bucket` → `mean(churn_14d)`; and per repo → `ai_share = ai touches / all touches`.
+
+🥇 **Result** — `github_churn_by_bucket`, `github_ai_share_by_repo` (Neon) → **the Durability chart**:
 
 | size bucket | ai_agent | ai_coauthor | human |
 |---|---|---|---|
-| 0–20 | 12.5 | 53.7 | 36.1 |
 | 20–100 | 15.7 | 74.0 | 100.9 |
 | 100–500 | 84.2 | 126.1 | 166.6 |
-| 500+ | 419.3 | 732.1 | 569.8 |
 
-*→ Within every size bucket, `ai_agent` code is rewritten no more than human — it isn't sloppier.*
-
-**`github_ai_share_by_repo`** — AI share of file-touches per repo.
-
-| repo | ai_pct |
-|---|---|
-| OpenHands | 59.1 |
-| cal.com | 53.2 |
-| airbyte | 27.1 |
+*→ within every size band, agent code is rewritten no more than human.*
 
 ---
 
 ## 💼 Pillar 2 — AI in the job market (German postings)
 
-**Question:** is the market asking workers to *use* AI, and *build* AI — and in
-which occupations?
-
-### Lineage
-
 ```mermaid
 flowchart LR
     subgraph BR["🥉 bronze (R2)"]
-      K["kaggle/sample_jobs_5000.csv<br/>general jobs"]
-      TJ["kaggle/job_postings_raw.csv<br/>tech jobs"]
-      AZ["adzuna/ (API · daily)"]
+      J["raw job postings<br/>general · tech · Adzuna (daily)"]
     end
-    subgraph RF["reference (join keys, local)"]
-      ES["ESCO occupations_de<br/>(title → ISCO)"]
-      IL["ILO exposure<br/>(ISCO → AI-exposure)"]
+    subgraph RF["reference data"]
+      ES["ESCO taxonomy<br/>(title → ISCO)"]
+      IL["ILO scores<br/>(ISCO → exposure)"]
     end
-    subgraph TX["transforms (Python)"]
-      IG["kaggle_jobs.py / tech_jobs.py"]
-      XC["esco_crosswalk.py<br/>(multilingual-e5 embeddings)"]
-      XT["ai_skill_tagger.py<br/>(anchors + guarded regex)"]
+    subgraph TX["transform (Python)"]
+      N["Title normaliser"]
+      XC["Crosswalk<br/>(multilingual embeddings)"]
+      XT["Skill tagger<br/>(guarded regex)"]
     end
-    subgraph SI["🥈 silver → Neon"]
-      SJ["jobs_kaggle<br/>jobs_tech"]
+    subgraph SI["🥈 silver"]
+      SJ["enriched postings"]
     end
-    subgraph GO["🥇 gold (dbt, Neon)"]
-      GJ["jobs_by_exposure_band_year<br/>jobs_by_occupation"]
+    subgraph GO["🥇 gold (dbt)"]
+      GJ["by exposure band × year<br/>· by occupation"]
     end
-    K --> IG
-    TJ --> IG
-    AZ --> IG
-    IG --> XC
-    IG --> XT
+    J --> N --> XC --> SJ --> GJ
+    N --> XT --> SJ
     ES --> XC
     IL --> XC
-    XC --> SJ
-    XT --> SJ
-    SJ --> GJ
 ```
 
-### Signal by signal
+🥉 **Starts as** — `kaggle/sample_jobs_5000.csv` · `kaggle/job_postings_raw.csv` (tech) · `adzuna/dt=*/de_*.csv` — raw postings:
 
-| Signal | Source in lake | Extraction & cleaning | Silver | Gold |
+| id | title | company | category | location |
 |---|---|---|---|---|
-| **Occupation code** (ISCO-08) | job `title` / `title_clean` + **ESCO** taxonomy | Normalize title (lowercase, strip `(m/w/d)`, gender suffixes, seniority/employment wrapper words). Match by **meaning** via multilingual-e5 embeddings → nearest ESCO label → its ISCO-08 code. **Tiered:** alias → exact → semantic → unmapped, each with a confidence `match_score`. | `jobs_kaggle` / `jobs_tech` (`isco08_4digit`, `match_method`, `match_score`) | `jobs_by_occupation` |
-| **AI-exposure** | ISCO code + **ILO** file | Join ISCO → ILO exposure (`exposure_category`, `mean_task_score`). If the code isn't in ILO, **impute** from its 3-digit (then 2-digit) parent average. | `exposure_category`, `exposure_order`, `mean_task_score`, `exposure_imputed` | `jobs_by_exposure_band_year` (`avg_exposure`) |
-| **AI-usage demand** (wants people who *use* AI) | job `title` + full `description` | Regex/anchor tagger: named tools (ChatGPT, Copilot, Claude…), gated `KI-Anwendung` (only near a usage verb), LLM tokens. Excludes false friends (`prompt`=pünktlich, `regenerativ`) and recruiter boilerplate. → `has_ai_usage`. | `has_ai_usage` | `jobs_by_exposure_band_year` (`ai_usage_rate`) |
-| **AI-building demand** (roles that *build* AI/ML) | `skills_extracted` + `description` | Same tagger, BUILD anchors: machine learning, PyTorch, TensorFlow, MLOps, fine-tuning… → `has_ai_building`. | `has_ai_building` | `jobs_by_exposure_band_year` (`ai_building_rate`) |
+| 495…21 | Senior Python Developer (m/w/d) | Acme GmbH | IT Jobs | Berlin |
+| 495…88 | Data Scientist – NLP | Beta AG | IT Jobs | München |
 
-### Gold samples
+🔧 **Transform 1 — “Title normaliser”** *(Python)*: strips `(m/w/d)` & gender variants and seniority/wrapper words — **and also** removes **employment-type / contract terms** (`Vollzeit`, `Teilzeit`, `Festanstellung`, `befristet`), **lowercases**, and **normalises umlauts + whitespace/punctuation**.
 
-**`jobs_by_exposure_band_year`** — per dataset × exposure band × year *(illustrative rows; real table = 38 rows)*.
+*example:* `Senior Python Developer (m/w/d) · Vollzeit` → `senior python developer`
+
+🔧 **Transform 2 — “Crosswalk”** *(multilingual-e5 embeddings + ESCO)*: embeds the cleaned title **and every ESCO occupation label**, then takes the nearest by **cosine similarity** — matching **by meaning, not keywords**.
+
+*ESCO reference (`reference/esco_occupations.csv`) — the taxonomy it matches against:*
+| esco_label | isco08_4digit |
+|---|---|
+| software developer | 2512 |
+| data scientist | 2511 |
+| systems analyst | 2511 |
+| financial analyst | 2412 |
+
+*match (cleaned title → nearest ESCO label → ISCO):*
+| title_clean | nearest ESCO label | cosine_sim | isco08_4digit |
+|---|---|---|---|
+| senior python developer | software developer | 0.86 | 2512 |
+| data scientist nlp | data scientist | 0.91 | 2511 |
+
+🔧 **Transform 3 — “Exposure join”** *(ISCO → ILO)*: joins that ISCO code to the **ILO** exposure table on `isco08_4digit` (imputes from the 3- then 2-digit parent if a code is missing).
+
+*ILO reference (`reference/ilo_ai_exposure_isco08.csv`) — exposure per occupation:*
+| isco08_4digit | occupation_name | exposure_category | mean_task_score |
+|---|---|---|---|
+| 2512 | Software developers | Gradient 3 | 0.71 |
+| 2511 | Systems analysts | Gradient 4 | 0.79 |
+| 2412 | Financial analysts | Gradient 2 | 0.48 |
+
+🔧 **Transform 4 — “Skill tagger”** *(guarded regex over a curated skills dictionary)*: scans title + description and sets two flags — **uses AI** (USE anchors: `ChatGPT, Copilot, Claude, LLM…`) vs **builds AI** (BUILD anchors: `machine learning, PyTorch, TensorFlow, MLOps, fine-tuning…`), excluding false friends.
+
+*how a description becomes a flag:*
+| description snippet | matched dictionary anchor | flag set |
+|---|---|---|
+| "…daily use of **ChatGPT** & **Copilot**…" | `chatgpt`, `copilot` → USE | `has_ai_usage = true` |
+| "…build & **fine-tune** models in **PyTorch**…" | `pytorch`, `fine-tune`, `machine learning` → BUILD | `has_ai_building = true` |
+| "…**prompt** payment terms…" | `prompt` → *excluded (false friend: “punctual”)* | no flag |
+
+🥈 **Becomes** — `kaggle/…` · `tech/…` · `adzuna/dt=*/…` (enriched) → Neon `jobs_kaggle` / `jobs_tech`. **This is where everything is joined onto one posting** — the **ISCO code from the Crosswalk**, the **exposure from the ILO join**, and the **flags from the Skill tagger**:
+
+| title_clean | isco08_4digit | occupation_name | exposure_category | mean_task_score | has_ai_usage | has_ai_building |
+|---|---|---|---|---|---|---|
+| senior python developer | 2512 | Software developers | Gradient 3 | 0.71 | false | true |
+| data scientist nlp | 2511 | Systems analysts | Gradient 4 | 0.79 | true | true |
+
+*→ one row = the raw title, its standard code (ESCO), its exposure score (ILO), and both AI flags (tagger) — all joined together.*
+
+🔧 **Silver → gold (dbt)**: `GROUP BY dataset, exposure_category, year` → `n_postings`, `ai_usage_rate = avg(has_ai_usage)`, `ai_building_rate = avg(has_ai_building)`, `avg_exposure = avg(mean_task_score)`; and a second model groups `BY isco08_4digit` for `jobs_by_occupation`.
+
+🥇 **Result** — `jobs_by_exposure_band_year`, `jobs_by_occupation` (Neon) → **the Jobs charts + exposure snapshot**:
 
 | dataset | exposure_category | year | n_postings | ai_usage_rate | ai_building_rate | avg_exposure |
 |---|---|---|---|---|---|---|
-| general | Gradient 4 (highest) | 2026 | 210 | 0.081 | 0.010 | 0.78 |
-| general | Gradient 2 | 2026 | 640 | 0.022 | 0.004 | 0.41 |
-| tech | Gradient 4 (highest) | 2025 | 180 | — | 0.560 | 0.80 |
+| general | Gradient 4 | 2026 | 210 | 0.081 | 0.010 | 0.78 |
+| tech | Gradient 4 | 2025 | 180 | — | 0.560 | 0.80 |
 
-*→ AI-usage demand concentrates in high-exposure roles; AI-building is a tech phenomenon.*
+*→ AI-usage concentrates in exposed roles; AI-building is a tech phenomenon.*
 
-**`jobs_by_occupation`** — occupation-level grain *(illustrative; real table = 549 rows)*.
-
-| isco08_4digit | occupation_name | n_postings | ai_usage_rate | mean_task_score |
-|---|---|---|---|---|
-| 2512 | Software developers | 430 | 0.061 | 0.79 |
-| 3341 | Office supervisors | 120 | 0.015 | 0.52 |
-
----
+> Samples show the **shape** of each stage (ids/companies masked); real partitions/tables hold the full data.
 
 ## What the cloud lift changed
 
