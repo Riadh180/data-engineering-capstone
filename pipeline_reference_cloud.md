@@ -28,12 +28,13 @@ once it lands in gold.
 
 ```mermaid
 flowchart TD
-    SRC["Sources<br/>Kaggle · Tech · GH Archive · Adzuna API · Git repos"] --> ING["Ingestion + Transforms<br/>(Python)"]
+    BATCH["Batch sources<br/>Kaggle · Tech · GH Archive · Git repos<br/>(host ingestion, manual)"] --> ING["Ingestion + Transforms<br/>(Python)"]
+    ADZ["Adzuna API<br/>(live jobs)"] --> ING
     ING -->|write silver| LAKE[("Data Lake · Cloudflare R2<br/>bronze/ + silver/")]
     LAKE -->|loaders read| SILVER[("Neon Postgres<br/>silver.*")]
     SILVER -->|dbt SQL models| GOLD[("Neon Postgres<br/>gold.*")]
     GOLD --> APP["Streamlit Community Cloud<br/>public dashboard"]
-    AIRFLOW["Airflow<br/>orchestration + scheduling"] -.->|"@daily · triggers Adzuna"| SRC
+    AIRFLOW["Airflow<br/>orchestration + scheduling"] -.->|"@daily · triggers Adzuna"| ADZ
     AIRFLOW -.->|on-demand · load + dbt rebuild| SILVER
 ```
 
