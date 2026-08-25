@@ -4,7 +4,7 @@ How is AI reshaping **code** and the **German job market**? This project builds 
 full **bronze → silver → gold** data pipeline over two pillars, **lifted to the
 cloud** and served through an interactive public dashboard.
 
-**🔗 Live dashboard:** `https://<your-app>.streamlit.app`
+**🔗 Live dashboard:** [aiwork-eu.streamlit.app](https://aiwork-eu.streamlit.app/)
 *neuefische / SPICED Data-Engineering bootcamp.*
 
 ---
